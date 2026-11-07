@@ -143,3 +143,12 @@ CELERY_BEAT_SCHEDULE = {
     "sms-reminders": {"task": "apps.appointments.tasks.send_due_reminders", "schedule": 3600.0},
     "mark-no-shows": {"task": "apps.appointments.tasks.mark_no_shows", "schedule": 6 * 3600.0},
 }
+
+# Send errors to stdout so they appear in Vercel / Docker logs (Django's default only emails admins).
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {"django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False}},
+}
