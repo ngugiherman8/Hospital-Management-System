@@ -1,1 +1,5 @@
-
+{% extends "base.html" %}{% block title %}Book appointment{% endblock %}
+{% block content %}<h1>Book appointment</h1><p class="sub">{{ patient.full_name }}, {{ patient.hospital_number }}</p>
+<form method="post" class="card" style="max-width:560px" novalidate>{% csrf_token %}
+{% for f in form %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endfor %}
+<a class="btn" href="{{ patient.get_absolute_url }}">Cancel</a> <button class="btn primary" type="submit">Book</button></form>{% endblock %}

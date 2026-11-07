@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}Appointments{% endblock %}
+{% block content %}<div class="top"><div><h1>Appointments</h1><p class="sub">{{ day|date:"l j F Y" }}</p></div>
+<form method="get"><input type="date" name="date" value="{{ day|date:'Y-m-d' }}" onchange="this.form.submit()" aria-label="Day"></form></div>
+<div class="card"><table><thead><tr><th>Time</th><th>Patient</th><th>Clinic</th><th>Doctor</th><th>Status</th><th></th></tr></thead><tbody>
+{% for a in appointments %}<tr><td>{{ a.starts_at|date:"H:i" }}</td><td><a href="{{ a.patient.get_absolute_url }}">{{ a.patient.full_name }}</a><small>{{ a.patient.hospital_number }}</small></td><td>{{ a.clinic }}</td><td>{{ a.doctor }}</td><td>{{ a.get_status_display }}</td>
+<td style="text-align:right">{% if a.status == 'booked' and user.role == 'receptionist' or a.status == 'booked' and user.role == 'admin' or a.status == 'booked' and user.is_superuser %}
+<form method="post" action="{% url 'appointments:status' a.pk 'arrived' %}" style="display:inline">{% csrf_token %}<button class="btn sm">Arrived</button></form>
+<form method="post" action="{% url 'appointments:status' a.pk 'cancel' %}" style="display:inline">{% csrf_token %}<button class="btn sm">Cancel</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6">No appointments on this day.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
