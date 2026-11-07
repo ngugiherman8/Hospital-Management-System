@@ -1,1 +1,15 @@
-
+{% extends "base.html" %}{% block title %}{{ patient.full_name }}{% endblock %}
+{% block content %}<div class="top"><div><p class="sub" style="margin:0">Patients / {{ patient.hospital_number }}</p><h1>{{ patient.full_name }}</h1>
+<p class="sub">{{ patient.get_sex_display }}, {{ patient.age }} years. {{ patient.hospital_number }}</p></div>
+<div>{% if user.role == 'receptionist' or user.role == 'admin' or user.is_superuser %}<a class="btn" href="{% url 'patients:edit' patient.pk %}">Edit</a>{% endif %}</div></div>
+{% if patient.allergies %}<div class="msg error"><b>Allergies:</b> {{ patient.allergies }}</div>{% endif %}
+<div class="layout"><div><section class="card"><h2>Details</h2><dl class="dl">
+<dt>Date of birth</dt><dd>{{ patient.date_of_birth|date:"j F Y" }}</dd><dt>ID</dt><dd>{{ patient.get_id_type_display }} {{ patient.masked_id }}</dd>
+<dt>Phone</dt><dd>{{ patient.phone }}</dd><dt>Area</dt><dd>{{ patient.area_of_residence|default:"-" }}</dd>
+<dt>Next of kin</dt><dd>{{ patient.next_of_kin_name|default:"-" }}{% if patient.next_of_kin_relationship %} ({{ patient.next_of_kin_relationship }}){% endif %} {{ patient.next_of_kin_phone }}</dd>
+<dt>Payer</dt><dd>{{ cover|default:"Cash / M-Pesa" }}</dd></dl></section>
+<section class="card"><h2>Recent appointments</h2><table><tbody>{% for a in appointments %}<tr><td>{{ a.starts_at|date:"D j M, H:i" }}</td><td>{{ a.clinic }}</td><td>{{ a.doctor }}</td><td>{{ a.get_status_display }}</td></tr>{% empty %}<tr><td>No appointments yet.</td></tr>{% endfor %}</tbody></table></section></div>
+{% if user.role == 'receptionist' or user.role == 'admin' or user.is_superuser %}<aside><section class="card"><h2>Today</h2>
+<form method="post" action="{% url 'walk_in' patient.pk %}">{% csrf_token %}<div class="field"><label for="clinic">Clinic</label><select id="clinic" name="clinic">{% for c in clinics %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select></div>
+<button class="btn primary" style="width:100%">Add to today's queue</button></form>
+<p style="margin-top:12px"><a class="btn" style="width:100%;text-align:center" href="{% url 'appointments:create' patient.pk %}">Book appointment</a></p></section></aside>{% endif %}</div>{% endblock %}
