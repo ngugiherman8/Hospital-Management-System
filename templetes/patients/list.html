@@ -1,1 +1,6 @@
-
+{% extends "base.html" %}{% block title %}Patients{% endblock %}
+{% block content %}<div class="top"><div><h1>Patients</h1><p class="sub">Search by name, hospital number or phone.</p></div>
+{% if user.role == 'receptionist' or user.is_superuser or user.role == 'admin' %}<a class="btn primary" href="{% url 'patients:create' %}">Register new patient</a>{% endif %}</div>
+<div class="card"><input type="search" name="q" value="{{ q }}" placeholder="Name, hospital no. or phone" aria-label="Search patients"
+ hx-get="{% url 'patients:list' %}" hx-trigger="input changed delay:300ms, search" hx-target="#rows" hx-push-url="true">
+<table style="margin-top:12px"><thead><tr><th>Hospital no.</th><th>Patient</th><th>Phone</th><th></th></tr></thead><tbody id="rows">{% include "patients/_rows.html" %}</tbody></table></div>{% endblock %}

@@ -1,0 +1,2 @@
+{% for p in patients %}<tr><td>{{ p.hospital_number }}</td><td><b>{{ p.full_name }}</b><small>{{ p.get_sex_display|slice:":1" }}, {{ p.age }} years</small></td><td>{{ p.phone }}</td><td><a class="btn sm" href="{{ p.get_absolute_url }}">Open</a></td></tr>
+{% empty %}<tr><td colspan="4">No patients found.</td></tr>{% endfor %}
