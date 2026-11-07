@@ -1,0 +1,20 @@
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}{{ HOSPITAL_NAME }}{% endblock %} · HMS</title>
+<link rel="stylesheet" href="{% static 'css/app.css' %}">
+<script src="{% static 'js/htmx.min.js' %}" defer></script></head>
+<body hx-headers='{"X-CSRFToken":"{{ csrf_token }}"}'>
+{% if user.is_authenticated %}
+<nav class="side" aria-label="Main">
+  <div class="brand"><i>H</i> {{ HOSPITAL_NAME }}</div>
+  <a href="{% url 'queue' %}" {% if request.resolver_match.url_name == 'queue' %}class="on"{% endif %}>Today's queue</a>
+  <a href="{% url 'patients:list' %}" {% if request.resolver_match.namespace == 'patients' %}class="on"{% endif %}>Patients</a>
+  <a href="{% url 'appointments:list' %}" {% if request.resolver_match.namespace == 'appointments' %}class="on"{% endif %}>Appointments</a>
+  {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin and audit log</a>{% endif %}
+  <div class="who"><b>{{ user }}</b><br>{{ user.get_role_display }}{% if user.department %}, {{ user.department }}{% endif %}<br>
+    <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button>Sign out</button></form></div>
+</nav>{% endif %}
+<main>
+{% for m in messages %}<div class="msg {{ m.tags }}" role="status">{{ m }}</div>{% endfor %}
+{% block content %}{% endblock %}
+</main></body></html>
