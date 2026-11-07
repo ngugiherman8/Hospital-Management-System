@@ -1,8 +1,0 @@
-<table><thead><tr><th>No.</th><th>Patient</th><th>Clinic</th><th>Waiting</th><th>Stage</th><th></th></tr></thead><tbody>
-{% for e in entries %}<tr><td><b>{{ e.ticket }}</b></td><td><b>{{ e.patient.full_name }}</b><small>{{ e.patient.sex }}, {{ e.patient.age }}. {{ e.patient.hospital_number }}</small></td>
-<td>{{ e.clinic }}</td><td>{% if e.stage == 'with_doctor' and e.room %}In room {{ e.room }}{% else %}{{ e.minutes_waiting }} min{% endif %}</td>
-<td><span class="pill p-{{ e.stage }}">{{ e.get_stage_display }}</span></td><td style="text-align:right">
-{% if e.stage == 'waiting_triage' and user.role == 'nurse' or e.stage == 'waiting_triage' and user.is_superuser %}<form method="post" action="{% url 'queue_stage' e.pk 'start-triage' %}">{% csrf_token %}<button class="btn sm">Start triage</button></form>
-{% elif e.stage == 'waiting_doctor' and user.role == 'doctor' or e.stage == 'waiting_doctor' and user.is_superuser %}<form method="post" action="{% url 'queue_stage' e.pk 'call-in' %}">{% csrf_token %}<input type="hidden" name="room" value="1"><button class="btn sm">Call in</button></form>
-{% elif e.stage == 'with_doctor' and user.role == 'doctor' %}<form method="post" action="{% url 'queue_stage' e.pk 'finish' %}">{% csrf_token %}<button class="btn sm">Finish</button></form>{% endif %}</td></tr>
-{% empty %}<tr><td colspan="6">Nobody in the queue.</td></tr>{% endfor %}</tbody></table>
