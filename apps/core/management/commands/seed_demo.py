@@ -1,4 +1,6 @@
 """Create starter clinics, departments and one demo user per role (development only)."""
+import os
+
 from django.core.management.base import BaseCommand
 
 from apps.appointments.models import Clinic
@@ -12,7 +14,7 @@ USERS = [("admin1", Role.ADMIN), ("reception1", Role.RECEPTIONIST), ("doctor1", 
 
 class Command(BaseCommand):
     def add_arguments(self, parser):
-        parser.add_argument("--password", default="ChangeMe-12345")
+        parser.add_argument("--password", default=os.environ.get("DEMO_PASSWORD", "ChangeMe-12345"))
 
     def handle(self, *args, **opts):
         for name in DEPARTMENTS:
