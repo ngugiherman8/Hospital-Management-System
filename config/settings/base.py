@@ -74,6 +74,24 @@ DATABASES = {
     }
 }
 
+# Hosted database (e.g. Supabase): set DATABASE_URL. Works with serverless hosts such as Vercel,
+# where each request may open its own connection through the provider's pooler (transaction mode).
+if env("DATABASE_URL"):
+    from urllib.parse import unquote, urlparse
+
+    _u = urlparse(env("DATABASE_URL"))
+    DATABASES["default"] = {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": _u.path.lstrip("/") or "postgres",
+        "USER": unquote(_u.username or ""),
+        "PASSWORD": unquote(_u.password or ""),
+        "HOST": _u.hostname,
+        "PORT": _u.port or 5432,
+        "CONN_MAX_AGE": 0,
+        "DISABLE_SERVER_SIDE_CURSORS": True,
+        "OPTIONS": {"sslmode": env("POSTGRES_SSLMODE", "require"), "prepare_threshold": None},
+    }
+
 AUTH_USER_MODEL = "core.User"
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
