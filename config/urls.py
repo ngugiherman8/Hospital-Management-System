@@ -23,7 +23,11 @@ urlpatterns = [
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("", appt_views.QueueView.as_view(), name="queue"),
     path("queue/walk-in/<int:patient_pk>/", appt_views.WalkInView.as_view(), name="walk_in"),
-    path("queue/<int:pk>/<str:action>/", appt_views.StageView.as_view(), name="queue_stage"),
+    path("queue/<int:pk>/emergency/", appt_views.FastTrackView.as_view(), name="queue_emergency"),
     path("patients/", include("apps.patients.urls")),
     path("appointments/", include("apps.appointments.urls")),
+    path("clinical/", include("apps.clinical.urls")),
+    path("orders/", include("apps.orders.urls")),
+    path("rx/", include("apps.pharmacy_rx.urls")),
+    path("wards/", include("apps.wards.urls")),
 ]
