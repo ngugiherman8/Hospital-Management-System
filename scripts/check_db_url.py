@@ -1,4 +1,5 @@
 """Build-time check of DATABASE_URL. Prints what was received (never the password) and tests the login."""
+
 import os
 import re
 import sys
@@ -18,9 +19,16 @@ if raw != raw.strip() or any(c in raw for c in "\"' \n"):
 try:
     import psycopg
 
-    with psycopg.connect(host=u.hostname, port=u.port or 5432, user=unquote(u.username or ""), password=pw,
-                         dbname=u.path.lstrip("/") or "postgres", sslmode="require", connect_timeout=15,
-                         prepare_threshold=None) as c:
+    with psycopg.connect(
+        host=u.hostname,
+        port=u.port or 5432,
+        user=unquote(u.username or ""),
+        password=pw,
+        dbname=u.path.lstrip("/") or "postgres",
+        sslmode="require",
+        connect_timeout=15,
+        prepare_threshold=None,
+    ) as c:
         c.execute("select 1")
     print("DB check -> login OK")
 except Exception as e:  # noqa: BLE001
