@@ -1,8 +1,19 @@
 <table><thead><tr><th>No.</th><th>Patient</th><th>Clinic</th><th>Waiting</th><th>Stage</th><th></th></tr></thead><tbody>
-{% for e in entries %}<tr><td><b>{{ e.ticket }}</b></td><td><b>{{ e.patient.full_name }}</b><small>{{ e.patient.sex }}, {{ e.patient.age }}. {{ e.patient.hospital_number }}</small></td>
-<td>{{ e.clinic }}</td><td>{% if e.stage == 'with_doctor' and e.room %}In room {{ e.room }}{% else %}{{ e.minutes_waiting }} min{% endif %}</td>
+{% for e in entries %}<tr><td><b>{{ e.ticket }}</b></td>
+<td><b>{{ e.patient.full_name }}</b>{% if e.visit.priority == 'emergency' %}<span class="tag emergency">Emergency</span>{% elif e.visit.priority == 'urgent' %}<span class="tag urgent">Urgent</span>{% endif %}<small>{{ e.patient.sex }}, {{ e.patient.age }}. {{ e.patient.hospital_number }}</small></td>
+<td>{{ e.clinic }}</td><td>{% if e.stage == 'with_doctor' and e.room %}In room {{ e.room }}{% elif e.stage == 'admitted' %}In ward{% else %}{{ e.minutes_waiting }} min{% endif %}</td>
 <td><span class="pill p-{{ e.stage }}">{{ e.get_stage_display }}</span></td><td style="text-align:right">
-{% if e.stage == 'waiting_triage' and user.role == 'nurse' or e.stage == 'waiting_triage' and user.is_superuser %}<form method="post" action="{% url 'queue_stage' e.pk 'start-triage' %}">{% csrf_token %}<button class="btn sm">Start triage</button></form>
-{% elif e.stage == 'waiting_doctor' and user.role == 'doctor' or e.stage == 'waiting_doctor' and user.is_superuser %}<form method="post" action="{% url 'queue_stage' e.pk 'call-in' %}">{% csrf_token %}<input type="hidden" name="room" value="1"><button class="btn sm">Call in</button></form>
-{% elif e.stage == 'with_doctor' and user.role == 'doctor' %}<form method="post" action="{% url 'queue_stage' e.pk 'finish' %}">{% csrf_token %}<button class="btn sm">Finish</button></form>{% endif %}</td></tr>
+{% if e.stage == 'waiting_triage' %}
+  {% if is_nurse %}<a class="btn sm" href="{% url 'clinical:triage' e.pk %}">Start triage</a>{% endif %}
+  {% if is_reception %}<form method="post" action="{% url 'queue_emergency' e.pk %}" style="display:flex;gap:6px;justify-content:flex-end">{% csrf_token %}<input name="reason" required placeholder="Emergency: reason" aria-label="Reason for emergency" style="width:170px;padding:6px"><button class="btn sm">Send to doctor</button></form>{% endif %}
+{% elif e.stage == 'waiting_doctor' %}
+  {% if is_doctor %}<form method="post" action="{% url 'clinical:call_in' e.pk %}">{% csrf_token %}<input type="hidden" name="room" value="1"><button class="btn sm">Call in</button></form>
+  {% elif is_nurse and e.visit.triaged_at %}<a class="btn sm" href="{% url 'clinical:triage' e.pk %}">Triage</a>
+  {% elif is_nurse %}<a class="btn sm" href="{% url 'clinical:triage' e.pk %}">Complete triage</a>{% endif %}
+{% elif e.stage == 'with_doctor' or e.stage == 'at_lab' %}
+  {% if is_doctor or is_nurse %}<a class="btn sm" href="{% url 'clinical:consult' e.pk %}">Open</a>{% endif %}
+  {% if e.stage == 'at_lab' and is_lab %}<a class="btn sm" href="{% url 'orders:lab' %}">Lab list</a>{% endif %}
+{% elif e.stage == 'admitted' %}
+  {% if is_doctor or is_nurse %}<a class="btn sm" href="{% url 'clinical:consult' e.pk %}">Open</a>{% endif %}
+{% endif %}</td></tr>
 {% empty %}<tr><td colspan="6">Nobody in the queue.</td></tr>{% endfor %}</tbody></table>
