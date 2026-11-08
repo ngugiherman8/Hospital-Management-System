@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}History{% endblock %}
+{% block content %}<div class="top"><div><p class="sub" style="margin:0">Patients / {{ patient.hospital_number }}</p><h1>{{ patient.full_name }}: visit history</h1>
+<p class="sub">{{ patient.get_sex_display }}, {{ patient.age }} years.{% if patient.allergies %} <b class="flag-critical">Allergies: {{ patient.allergies }}</b>{% endif %}</p></div><a class="btn" href="{{ patient.get_absolute_url }}">Back to patient</a></div>
+<div class="timeline">{% for v in visits %}<div class="card"><div class="row" style="display:flex;justify-content:space-between"><h2 style="margin:0">{{ v.started_at|date:"j M Y" }}: {{ v.get_kind_display }}</h2><a href="{% url 'clinical:visit' v.pk %}">Open full record</a></div>
+<p class="muted" style="margin:4px 0 10px">{% if v.doctor %}Dr {{ v.doctor }}. {% endif %}{% if v.complaint %}{{ v.complaint }}{% endif %}</p>
+{% if v.diagnoses.all %}<p style="margin:0 0 8px"><b>Diagnosis:</b> {% for d in v.diagnoses.all %}{{ d.icd10.code }} {{ d.icd10.title }}{% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+{% if v.orders.all %}<p style="margin:0 0 8px"><b>Tests:</b> {% for o in v.orders.all %}{{ o.test.name }}{% if o.result %}: <span class="{% if o.result.flag != 'normal' %}flag-high{% endif %}">{{ o.result.value }} {{ o.result.unit }}</span>{% else %} ({{ o.get_status_display|lower }}){% endif %}{% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+{% if v.prescriptions.all %}<p style="margin:0"><b>Medicine:</b> {% for p in v.prescriptions.all %}{{ p.drug.name }} {{ p.drug.strength }}, {{ p.get_frequency_display|lower }} for {{ p.days }} days{% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}</div>
+{% empty %}<div class="card">No visits recorded yet.</div>{% endfor %}</div>{% endblock %}

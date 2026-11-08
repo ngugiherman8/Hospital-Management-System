@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block title %}Visit record{% endblock %}
+{% block content %}<div class="top"><div><p class="sub" style="margin:0">Patients / {{ patient.hospital_number }} / Visit</p><h1>Visit on {{ visit.started_at|date:"j M Y" }}</h1><p class="sub">{{ visit.get_kind_display }}{% if visit.doctor %}. Dr {{ visit.doctor }}{% endif %}. {{ visit.get_status_display }}</p></div>
+<a class="btn" href="{% url 'clinical:history' patient.pk %}">Back to history</a></div>
+{% include "clinical/_banner.html" %}
+<div class="layout"><div>
+<section class="card"><h2>Notes</h2>
+{% if history_note %}<p><b>History</b> <small class="muted">v{{ history_note.version }}, {{ history_note.author|default:"-" }}</small><br>{{ history_note.text|linebreaksbr }}</p>{% endif %}
+{% if exam_note %}<p><b>Examination</b> <small class="muted">v{{ exam_note.version }}, {{ exam_note.author|default:"-" }}</small><br>{{ exam_note.text|linebreaksbr }}</p>{% endif %}
+{% if plan_note %}<p><b>Plan</b> <small class="muted">v{{ plan_note.version }}, {{ plan_note.author|default:"-" }}</small><br>{{ plan_note.text|linebreaksbr }}</p>{% endif %}
+{% for n in progress_notes %}<p><b>Progress note</b> <small class="muted">{{ n.created_at|date:"j M H:i" }}, {{ n.author|default:"-" }}</small><br>{{ n.text|linebreaksbr }}</p>{% endfor %}
+{% if not history_note and not exam_note and not plan_note and not progress_notes %}<p class="muted">No notes.</p>{% endif %}</section>
+<section class="card"><h2>Observations</h2>{% include "clinical/_vitals_table.html" %}</section>
+{% include "clinical/_diagnoses.html" %}{% include "clinical/_rx.html" %}</div><aside>{% include "clinical/_orders.html" %}
+{% if visit.outcome %}<section class="card"><h2>Outcome</h2><p style="margin:0">{{ visit.get_outcome_display }}{% if visit.referred_to %}: {{ visit.referred_to }}{% endif %}</p></section>{% endif %}
+{% if admission %}<section class="card"><h2>Admission</h2><p style="margin:0"><a href="{% url 'wards:summary' admission.pk %}">{{ admission.number }}</a>, {{ admission.bed }}</p></section>{% endif %}</aside></div>{% endblock %}

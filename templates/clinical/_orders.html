@@ -1,0 +1,13 @@
+<section class="card"><h2>Tests</h2>
+{% for o in orders %}<div class="item"><div class="row"><div><b>{{ o.test.name }}</b>{% if o.urgent %}<span class="tag urgent">Urgent</span>{% endif %}<br><small class="muted">{{ o.number }}, ordered {{ o.ordered_at|date:"H:i" }}{% if o.clinical_notes %}. {{ o.clinical_notes }}{% endif %}</small></div>
+<span class="pill {% if o.status == 'resulted' %}p-with_doctor{% elif o.status == 'cancelled' %}p-done{% else %}p-waiting_doctor{% endif %}">{{ o.get_status_display }}</span></div>
+{% if o.result %}<p style="margin:8px 0 0"><b class="{% if o.result.flag == 'high' or o.result.flag == 'low' or o.result.flag == 'abnormal' %}flag-high{% endif %}">{{ o.result.value }} {{ o.result.unit }}</b> ({{ o.result.get_flag_display }}). <small class="muted">{{ o.result.resulted_at|date:"j M H:i" }}{% if o.result.comment %}. {{ o.result.comment }}{% endif %}</small></p>
+{% if o.result.earlier %}<details><summary>Earlier result (corrected)</summary>{% for r in o.result.earlier %}<div class="old">{{ r.value }} {{ r.unit }} ({{ r.get_flag_display }}), {{ r.resulted_at|date:"j M H:i" }}</div>{% endfor %}</details>{% endif %}{% endif %}
+{% if can_edit and o.status == 'ordered' %}<form method="post" action="{% url 'orders:cancel' visit.pk o.pk %}" style="margin-top:6px">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}"><button class="linkbtn">Cancel this test</button></form>{% endif %}</div>
+{% empty %}<p class="muted">No tests ordered.</p>{% endfor %}
+{% if can_edit %}<form method="post" action="{% url 'orders:add' visit.pk %}" style="margin-top:10px">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+<div class="field"><label for="id_test">{{ order_form.test.label }}</label>{{ order_form.test }}{% for e in order_form.test.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+<div class="field"><label for="id_clinical_notes">{{ order_form.clinical_notes.label }}</label>{{ order_form.clinical_notes }}</div>
+<label style="display:flex;gap:8px;align-items:center;font-weight:500">{{ order_form.urgent }} Urgent</label>
+<button class="btn" style="margin-top:10px">Order test</button></form>
+{% if entry and entry.stage == 'with_doctor' and open_orders %}<form method="post" action="{% url 'clinical:send_to_lab' visit.pk %}" style="margin-top:10px">{% csrf_token %}<button class="btn primary" style="width:100%">Send patient to the lab</button></form>{% endif %}{% endif %}</section>

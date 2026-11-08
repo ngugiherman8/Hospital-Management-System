@@ -1,0 +1,27 @@
+{% extends "base.html" %}{% block title %}{{ admission.number }}{% endblock %}
+{% block content %}
+<div class="top"><div><p class="sub" style="margin:0">Wards / {{ admission.number }}</p><h1>{{ patient.full_name }}</h1>
+<p class="sub">{{ admission.bed }}. Day {{ admission.days_in_ward }}. {% if admission.status == 'discharged' %}Discharged {{ admission.discharged_at|date:"j M Y" }}{% else %}In ward since {{ admission.admitted_at|date:"j M Y, H:i" }}{% endif %}</p></div>
+<div class="noprint"><a class="btn" href="{% url 'wards:board' %}">Ward board</a>{% if admission.status == 'discharged' %} <a class="btn primary" href="{% url 'wards:summary' admission.pk %}">Discharge summary</a>{% endif %}</div></div>
+{% include "clinical/_banner.html" %}
+<div class="warnbox" style="margin-bottom:16px"><b>Reason for admission:</b> {{ admission.reason }}</div>
+<div class="layout"><div>
+<section class="card"><h2>Observations</h2>{% include "clinical/_vitals_table.html" %}
+{% if can_note %}<form method="post" action="{% url 'clinical:vitals_add' visit.pk %}" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+{% for e in vitals_form.non_field_errors %}<div class="err">{{ e }}</div>{% endfor %}
+<div class="vgrid">{% for f in vitals_form.visible_fields %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endfor %}</div>{{ vitals_form.pain_score }}
+<button class="btn">Record observations</button></form>{% endif %}</section>
+{% include "clinical/_notes.html" %}
+{% include "clinical/_diagnoses.html" %}
+{% include "clinical/_rx.html" %}
+</div><aside>
+{% include "clinical/_orders.html" %}
+<section class="card"><h2>Bed history</h2>{% for m in admission.moves.all %}<p style="margin:0 0 6px">{{ m.moved_at|date:"j M H:i" }}: {{ m.from_bed|default:"Admitted" }} → {{ m.to_bed }}</p>{% endfor %}
+{% if can_transfer and admission.status == 'admitted' %}<form method="post" action="{% url 'wards:transfer' visit.pk %}" style="margin-top:12px">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+<div class="field"><label for="id_bed">{{ transfer_form.bed.label }}</label>{{ transfer_form.bed }}</div><button class="btn">Transfer</button></form>{% endif %}</section>
+{% if can_edit and admission.status == 'admitted' %}<section class="card"><h2>Discharge</h2>
+<form method="post" action="{% url 'wards:discharge' visit.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+{% for e in discharge_form.non_field_errors %}<div class="err">{{ e }}</div>{% endfor %}
+{% for f in discharge_form %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endfor %}
+<p class="muted" style="font-size:13px">A diagnosis is required. The bed is released for cleaning.</p><button class="btn primary" style="width:100%">Discharge patient</button></form></section>{% endif %}
+</aside></div>{% endblock %}

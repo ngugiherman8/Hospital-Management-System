@@ -1,0 +1,44 @@
+{% extends "base.html" %}{% block title %}Triage {{ entry.ticket }}{% endblock %}
+{% block content %}
+<form method="post" novalidate>{% csrf_token %}
+<div class="top"><div><p class="sub" style="margin:0">Today's queue / {{ entry.ticket }}</p><h1>Triage</h1>{% if readonly %}<p class="sub">View only. Triage is done by the nurse.</p>{% endif %}</div>
+<div><a class="btn" href="{% url 'queue' %}">Back to queue</a>{% if not readonly %} <button class="btn primary" type="submit">Save and send to doctor</button>{% endif %}</div></div>
+<section class="card"><div class="banner">
+ <div class="who"><h2 style="margin:0;font-size:20px">{{ patient.full_name }}</h2><small>{{ patient.get_sex_display }}, {{ patient.age }} years. {{ patient.hospital_number }}</small></div>
+ <dl><dt>Payer</dt><dd>{% if cover %}{{ cover.get_payer_type_display }}{% else %}Cash / M-Pesa{% endif %}</dd></dl>
+ <dl><dt>Clinic</dt><dd>{{ entry.clinic }}</dd></dl>
+ <dl><dt>Allergies</dt><dd>{% if patient.allergies %}<span class="flag-critical">{{ patient.allergies }}</span>{% else %}None recorded{% endif %}</dd></dl>
+ <dl><dt>Last visit</dt><dd>{% if last_visit %}{{ last_visit.started_at|date:"j M Y" }}{% else %}First visit{% endif %}</dd></dl></div>
+ {% if visit.fast_track_reason %}<div class="warnbox danger" style="margin-top:10px">Sent straight to the doctor from reception: {{ visit.fast_track_reason }}. Please complete triage now.</div>{% endif %}</section>
+{% if form.non_field_errors %}<div class="msg error">{{ form.non_field_errors }}</div>{% endif %}
+<fieldset {% if readonly %}disabled{% endif %} style="border:0;padding:0;margin:0"><div class="layout"><div>
+<section class="card"><h2>Vital signs</h2><div class="vgrid">
+{% with f=form.temperature %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}<div class="hint" id="temp-hint"></div>{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.pulse %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.resp_rate %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.blood_pressure %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.spo2 %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.blood_sugar %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.weight_kg %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+{% with f=form.height_cm %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endwith %}
+<div class="field"><label>BMI (calculated)</label><div id="bmi" style="padding:10px 0;font-weight:700">-</div></div>
+<div class="full"><label>Pain score (0 = none, 10 = worst)</label>{{ form.pain_score }}<div class="pain" role="group" aria-label="Pain score">{% for n in pain_range %}<button type="button" data-v="{{ n }}" aria-pressed="false">{{ n }}</button>{% endfor %}</div>{% for e in form.pain_score.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+</div></section></div>
+<aside>
+<section class="card"><h2>Reason for visit</h2>
+<div class="field"><label for="{{ form.complaint.id_for_label }}">{{ form.complaint.label }}</label>{{ form.complaint }}{% for e in form.complaint.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+<div class="field"><label for="{{ form.duration.id_for_label }}">{{ form.duration.label }}</label>{{ form.duration }}</div></section>
+<section class="card"><h2>Priority</h2><div class="opts">{% for radio in form.priority %}<label>{{ radio.tag }} {{ radio.choice_label }}</label>{% endfor %}</div>
+<div id="alerts" class="warnbox" style="display:none" role="status"></div></section></aside></div></fieldset></form>
+<script>
+(function(){
+ var $=function(id){return document.getElementById(id)},T=$('id_temperature'),W=$('id_weight_kg'),H=$('id_height_cm'),P=$('id_pain_score');
+ function bmi(){var w=parseFloat(W.value),h=parseFloat(H.value)/100;$('bmi').textContent=(w>0&&h>0)?(w/(h*h)).toFixed(1):'-'}
+ function temp(){var t=parseFloat(T.value),hint=$('temp-hint'),box=$('alerts');
+  if(t>=38){hint.textContent='High';T.classList.add('alert-field');box.style.display='block';box.textContent='Temperature is above 38 °C. The doctor will see this at the top of the consultation.'}
+  else{hint.textContent=t<35.5?'Low':'';T.classList.remove('alert-field');box.style.display='none'}}
+ function pain(){document.querySelectorAll('.pain button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.v===P.value?'true':'false')})}
+ document.querySelectorAll('.pain button').forEach(function(b){b.addEventListener('click',function(){P.value=b.dataset.v;pain()})});
+ [W,H].forEach(function(e){e.addEventListener('input',bmi)});T.addEventListener('input',temp);bmi();temp();pain();
+})();
+</script>{% endblock %}

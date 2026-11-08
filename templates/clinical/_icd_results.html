@@ -1,0 +1,3 @@
+{% for c in results %}<form method="post" action="{% url 'clinical:diagnosis_add' visit.pk %}" style="margin:4px 0">{% csrf_token %}<input type="hidden" name="icd10" value="{{ c.pk }}"><input type="hidden" name="next" value="{{ next }}">
+<button class="btn sm" name="kind" value="provisional" style="width:100%;text-align:left">{{ c.code }} {{ c.title }}</button></form>
+{% empty %}{% if q|length >= 2 %}<p class="muted">No match.</p>{% endif %}{% endfor %}

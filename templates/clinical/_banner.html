@@ -1,0 +1,15 @@
+<section class="card"><div class="banner">
+  <div class="who"><h2 style="margin:0;font-size:20px">{{ patient.full_name }}</h2>
+    <small>{{ patient.get_sex_display }}, {{ patient.age }} years. {{ patient.hospital_number }}{% if cover %}. {{ cover.get_payer_type_display }}{% endif %}</small></div>
+  <dl><dt>Allergies</dt><dd>{% if patient.allergies %}<span class="flag-critical">{{ patient.allergies }}</span>{% else %}None recorded{% endif %}</dd></dl>
+  {% if latest %}
+  <dl><dt>Temperature</dt><dd class="{% if 'Temperature' in latest.flagged %}flag-high{% endif %}">{{ latest.temperature|default_if_none:"-" }}{% if latest.temperature %} °C{% endif %}{% if 'Temperature' in latest.flagged %}, flagged{% endif %}</dd></dl>
+  <dl><dt>Pulse</dt><dd class="{% if 'Pulse' in latest.flagged %}flag-high{% endif %}">{{ latest.pulse|default_if_none:"-" }}</dd></dl>
+  <dl><dt>BP</dt><dd class="{% if 'Blood pressure' in latest.flagged %}flag-high{% endif %}">{{ latest.bp|default:"-" }}</dd></dl>
+  <dl><dt>SpO₂</dt><dd class="{% if 'Oxygen saturation' in latest.flagged %}flag-critical{% endif %}">{{ latest.spo2|default_if_none:"-" }}{% if latest.spo2 %}%{% endif %}</dd></dl>
+  <dl><dt>Weight</dt><dd>{{ latest.weight_kg|default_if_none:"-" }}{% if latest.weight_kg %} kg{% endif %}</dd></dl>
+  {% endif %}
+  {% if visit.complaint %}<dl style="flex-basis:100%"><dt>Complaint{% if visit.priority != 'routine' %} <span class="tag {{ visit.priority }}">{{ visit.get_priority_display }}</span>{% endif %}</dt><dd style="font-weight:500">{{ visit.complaint }}{% if visit.duration %} ({{ visit.duration }}){% endif %}</dd></dl>{% endif %}
+  {% if visit.fast_track_reason %}<div class="warnbox danger" style="flex-basis:100%">Sent straight to the doctor from reception: {{ visit.fast_track_reason }}. Triage is still to be completed.</div>{% endif %}
+</div>
+<p style="margin:10px 0 0;text-align:right" class="noprint"><a href="{% url 'clinical:history' patient.pk %}">Past visits ({{ past_visit_count }})</a></p></section>

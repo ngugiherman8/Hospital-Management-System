@@ -1,0 +1,9 @@
+<section class="card"><h2>Diagnosis</h2>
+{% if can_edit %}<label for="icd-q">Search by name or ICD-10 code</label>
+<input id="icd-q" type="search" name="q" placeholder="Start typing" autocomplete="off"
+ hx-get="{% url 'clinical:icd_search' visit.pk %}?next={{ next|urlencode }}" hx-trigger="input changed delay:250ms, search" hx-target="#icd-results" hx-include="this">
+<div id="icd-results" style="margin:8px 0"></div>{% endif %}
+<div>{% for d in diagnoses %}<span class="chip">{{ d.get_kind_display }}: {{ d.icd10.code }} {{ d.icd10.title }}
+{% if can_edit %}{% if d.kind == 'provisional' %}<form method="post" action="{% url 'clinical:diagnosis_action' visit.pk d.pk 'confirm' %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}"><button title="Mark as confirmed">confirm</button></form>{% endif %}
+<form method="post" action="{% url 'clinical:diagnosis_action' visit.pk d.pk 'remove' %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}"><button aria-label="Remove {{ d.icd10.code }}">remove</button></form>{% endif %}</span>
+{% empty %}<p class="muted">No diagnosis yet.</p>{% endfor %}</div></section>

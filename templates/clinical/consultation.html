@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block title %}Consultation{% endblock %}
+{% block content %}
+<form id="mainform" method="post" action="{% url 'clinical:consult' entry.pk %}">{% csrf_token %}</form>
+<div class="top"><div><p class="sub" style="margin:0">Today's queue / {{ entry.ticket }}</p><h1>Consultation</h1>
+{% if not can_edit %}<p class="sub">{% if visit.is_open %}View only. The doctor writes the consultation.{% else %}This consultation is closed.{% endif %}</p>{% endif %}</div>
+<div class="noprint"><a class="btn" href="{% url 'queue' %}">Back to queue</a>
+{% if can_edit %} <button class="btn" form="mainform" name="action" value="save">Save draft</button> <button class="btn primary" form="mainform" name="action" value="finish">Finish and send to pharmacy and billing</button>{% endif %}</div></div>
+{% include "clinical/_banner.html" %}
+{% if consult_form.errors %}<div class="msg error">{{ consult_form.errors }}</div>{% endif %}
+<div class="layout"><div>
+<section class="card"><h2>Notes</h2>{% if visit.complaint %}<p class="muted">Triage: {{ visit.complaint }}{% if latest.pain_score is not None %}. Pain {{ latest.pain_score }}/10{% endif %}.</p>{% endif %}
+<fieldset {% if not can_edit %}disabled{% endif %} style="border:0;padding:0;margin:0">
+<div class="field"><label for="id_history">History</label>{{ consult_form.history }}{% if history_note.history %}<details><summary>Earlier versions ({{ history_note.history|length }})</summary>{% for o in history_note.history %}<div class="old"><small>{{ o.created_at|date:"j M H:i" }} by {{ o.author|default:"-" }}</small><br>{{ o.text|linebreaksbr }}</div>{% endfor %}</details>{% endif %}</div>
+<div class="field"><label for="id_examination">Examination</label>{{ consult_form.examination }}{% if exam_note.history %}<details><summary>Earlier versions ({{ exam_note.history|length }})</summary>{% for o in exam_note.history %}<div class="old"><small>{{ o.created_at|date:"j M H:i" }} by {{ o.author|default:"-" }}</small><br>{{ o.text|linebreaksbr }}</div>{% endfor %}</details>{% endif %}</div>
+<div class="field"><label for="id_plan">Plan</label>{{ consult_form.plan }}{% if plan_note.history %}<details><summary>Earlier versions ({{ plan_note.history|length }})</summary>{% for o in plan_note.history %}<div class="old"><small>{{ o.created_at|date:"j M H:i" }} by {{ o.author|default:"-" }}</small><br>{{ o.text|linebreaksbr }}</div>{% endfor %}</details>{% endif %}</div></fieldset></section>
+{% include "clinical/_diagnoses.html" %}
+{% include "clinical/_rx.html" %}
+</div><aside>
+{% include "clinical/_orders.html" %}
+<section class="card"><h2>Outcome</h2><fieldset {% if not can_edit %}disabled{% endif %} style="border:0;padding:0;margin:0"><div class="opts">{% for radio in consult_form.outcome %}<label>{{ radio.tag }} {{ radio.choice_label }}</label>{% endfor %}</div>
+<div class="field"><label for="id_referred_to">{{ consult_form.referred_to.label }}</label>{{ consult_form.referred_to }}</div>
+<div class="field"><label for="id_review_in_days">Review visit</label>{{ consult_form.review_in_days }}</div></fieldset></section>
+<section class="card"><h2>What happens next</h2><p class="muted" style="margin:0">Going home: the visit is completed and the prescription goes to the pharmacy. Admit to ward: you choose a free bed on the next screen. Charges for consultation, tests and medicine are added to one bill.</p></section>
+</aside></div>{% endblock %}

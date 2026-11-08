@@ -1,0 +1,9 @@
+<section class="card"><h2>Progress notes</h2>
+{% for n in progress_notes %}<div class="item"><div class="row"><div><b>{{ n.author|default:"-" }}</b> <small class="muted">{{ n.created_at|date:"j M H:i" }}{% if n.amends_id %}, version {{ n.version }}{% endif %}</small></div></div>
+<p style="white-space:pre-line;margin:6px 0">{{ n.text }}</p>
+{% if n.amend_reason %}<small class="muted">Amended: {{ n.amend_reason }}</small>{% endif %}
+{% if n.history %}<details><summary>Earlier versions ({{ n.history|length }})</summary>{% for o in n.history %}<div class="old"><small>{{ o.created_at|date:"j M H:i" }} by {{ o.author|default:"-" }}</small><br>{{ o.text|linebreaksbr }}</div>{% endfor %}</details>{% endif %}
+{% if can_note %}<details><summary>Amend this note</summary><form method="post" action="{% url 'clinical:note_amend' visit.pk n.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+<div class="field"><textarea name="text" rows="3" required aria-label="Corrected note">{{ n.text }}</textarea></div><div class="field"><input name="reason" required maxlength="200" placeholder="Why is this being amended?" aria-label="Reason"></div><button class="btn sm">Save amendment</button></form></details>{% endif %}</div>
+{% empty %}<p class="muted">No notes yet.</p>{% endfor %}
+{% if can_note %}<form method="post" action="{% url 'clinical:note_add' visit.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}"><div class="field"><label for="note_text">New note</label><textarea id="note_text" name="text" rows="3" required></textarea></div><button class="btn">Save note</button></form>{% endif %}</section>

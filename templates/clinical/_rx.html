@@ -1,1 +1,18 @@
-
+<section class="card"><h2>Prescription</h2>
+{% if prescriptions %}<table><thead><tr><th>Drug</th><th>Dose and route</th><th>How often</th><th>Days</th><th>Quantity</th><th>Status</th><th></th></tr></thead><tbody>
+{% for p in prescriptions %}<tr><td><b>{{ p.drug.label }}</b>{% if p.allergy_warning %}<small class="flag-critical">Allergy warning acknowledged by {{ p.allergy_acknowledged_by }}: {{ p.allergy_override_reason }}</small>{% endif %}</td>
+<td>{{ p.dose }} {{ p.get_route_display }}</td><td>{{ p.get_frequency_display }}</td><td>{{ p.days }}</td><td>{{ p.quantity|floatformat:"-1" }}</td><td>{{ p.get_status_display }}</td>
+<td>{% if can_edit and p.status == 'pending' %}<form method="post" action="{% url 'rx:cancel' visit.pk p.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}"><button class="linkbtn">Cancel</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table>
+{% else %}<p class="muted">No medicine prescribed.</p>{% endif %}
+{% if can_edit %}<form method="post" action="{% url 'rx:add' visit.pk %}" style="margin-top:14px">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+{% for e in rx_form.non_field_errors %}<div class="warnbox danger" role="alert" style="margin-bottom:10px">{{ e }}</div>{% endfor %}
+<div class="grid2"><div class="field"><label for="id_drug">Drug</label>{{ rx_form.drug }}{% for e in rx_form.drug.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+<div class="field"><label for="id_dose">{{ rx_form.dose.label }}</label>{{ rx_form.dose }}{% for e in rx_form.dose.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+<div class="field"><label for="id_units_per_dose">{{ rx_form.units_per_dose.label }}</label>{{ rx_form.units_per_dose }}</div>
+<div class="field"><label for="id_route">Route</label>{{ rx_form.route }}</div>
+<div class="field"><label for="id_frequency">{{ rx_form.frequency.label }}</label>{{ rx_form.frequency }}</div>
+<div class="field"><label for="id_days">{{ rx_form.days.label }}</label>{{ rx_form.days }}</div></div>
+{% if rx_form.non_field_errors %}<label style="display:flex;gap:8px;align-items:center;font-weight:500">{{ rx_form.override_allergy }} {{ rx_form.override_allergy.label }}</label>
+<div class="field" style="margin-top:8px"><label for="id_override_reason">{{ rx_form.override_reason.label }}</label>{{ rx_form.override_reason }}</div>{% endif %}
+<button class="btn">Add drug</button>
+<p class="muted" style="font-size:13px;margin:8px 0 0">The system checks the patient's recorded allergies when a drug is added. Stock is checked at the pharmacy.</p></form>{% endif %}</section>

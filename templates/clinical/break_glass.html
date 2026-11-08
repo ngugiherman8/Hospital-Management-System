@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block title %}Restricted record{% endblock %}
+{% block content %}<div class="card" style="max-width:560px"><h1 style="font-size:22px">Restricted clinical record</h1>
+<p>{{ patient.full_name }}'s notes and results are only for the doctors and nurses caring for them. If you need this record in an emergency, you can open it for 30 minutes. Your name and reason are recorded and reviewed.</p>
+<form method="post" action="{% url 'clinical:break_glass' patient.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+<div class="field"><label for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>{{ form.reason }}{% for e in form.reason.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+<a class="btn" href="{{ patient.get_absolute_url }}">Cancel</a> <button class="btn primary" type="submit">Open in emergency</button></form></div>{% endblock %}
