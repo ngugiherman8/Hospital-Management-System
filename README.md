@@ -39,22 +39,63 @@ PostgreSQL service, then builds the Docker image.
 
 ## What is built
 
-Phase 1 exit gate: a receptionist can register a patient and book a visit.
+### Phase 1: foundation
+Users and roles, audit log, login history, patient registry with duplicate detection, appointments, SMS reminder
+task, and today's queue. Details are in the code under `apps/core`, `apps/patients` and `apps/appointments`.
 
-| Area | Where | Notes |
+### Phase 2: clinical module
+
+| Area | App | What it does |
 | --- | --- | --- |
-| Users, roles, departments | `apps/core` | Roles: admin, receptionist, doctor, nurse, lab, pharmacist, cashier. 20-minute idle timeout, 10-character minimum password |
-| Audit log | `apps/core/audit.py` | Any model extending `AuditedModel` is logged automatically (who, what changed, when, IP). Record views are logged. Entries are append-only |
-| Login history | `apps/core` | Logins, logouts and failed attempts |
-| Patient registry | `apps/patients` | Sequential hospital number (HN-000123), phone normalisation, duplicate detection (same ID, same phone, similar name and date of birth), payer / cover |
-| Appointments | `apps/appointments` | Booking per doctor and clinic with double-booking prevention, arrived / cancelled, SMS reminder task, no-show sweep |
-| Today's queue | `apps/appointments` | Walk-ins and arrived appointments get a daily ticket (A-001), stage tracking, 30-second auto refresh |
+| Triage | `clinical` | Vitals with out-of-range flags, BMI, pain score, complaint and priority. Nurses edit; doctors and reception view |
+| Consultation | `clinical` | History, examination and plan (versioned, never overwritten), ICD-10 search, outcome (home, admit, refer), review date. Doctors edit; nurses view |
+| Orders and results | `orders` | Test catalogue (price, normal range, sample type), orders numbered `LAB-2026-000123`, lab work list, results, corrections that add a new result and keep the old one |
+| Prescriptions | `pharmacy_rx` | Drug list, dose, frequency, days, calculated quantity, allergy check with a logged acknowledgement. Pharmacists get a read-only list. Stock arrives in Phase 3 |
+| Wards and admissions | `wards` | Wards, beds (free, occupied, being cleaned), admit, transfer, discharge summary (printable), bed history. One active admission per bed and per patient, enforced by the database |
+| Patient timeline | `clinical` | All visits, diagnoses, results and medicines on one page. Doctors and nurses open it directly; others need a logged break-glass override |
+
+**Visit status** (`apps/appointments/models.py`, `TRANSITIONS`) is the single place that says who may take which step and
+what must be true first: save triage, emergency fast-track from reception (reason required, audited), call in, send to
+lab (needs an order), return from lab (needs every test resulted or cancelled), complete (needs a diagnosis and an outcome
+of home or refer), admit (needs an admission), discharge (needs a summary). The queue is ordered emergency, urgent,
+routine, then arrival.
+
+**Who can do what**
+
+| Screen | Can change | Can view |
+| --- | --- | --- |
+| Triage | Nurse | Doctor, reception |
+| Consultation, diagnosis, tests, prescription | Doctor | Nurse |
+| Lab work list and results | Lab (procedures: doctor or nurse) | Doctor, nurse |
+| Prescription list | Doctor (prescribing) | Nurse, pharmacist |
+| Ward board | Nurse (release cleaned beds) | Doctor, reception |
+| Admit and discharge | Doctor | Nurse |
+| Transfer | Nurse | Doctor |
+| Patient timeline | Nobody edits | Doctor, nurse |
+
+Administrators can do everything. Reception, cashier and pharmacist never see notes or result text.
+
+### How this differs from the Phase 2 instructions
+
+The instructions assume a Phase 1 with some helpers; here is how each maps to what exists.
+
+- `accounts` app: users, roles and departments live in `core`.
+- `AuditedModel` is in `apps.core.audit`; `log_access(obj)` and `role_required(...)` were added; `Sequence.next(name)` and `Sequence.next_number(prefix)` were added to `core` and are used for order and admission numbers.
+- The visit is `clinical.Visit` (linked to the queue entry). It carries the triage fields and the consultation outcome, so there is no separate `TriageRecord` or `Consultation` table. `VitalSigns` holds readings (triage and ward rounds). `ClinicalNote` is the versioned note (`NoteVersion`), `VisitDiagnosis` is `Diagnosis`.
+- Each ordered test is one `Order` row (no separate order header and item); `Result` rows are never edited.
+- Result flags are normal, high, low, and abnormal (for yes/no style results such as a malaria test).
+- Printing: the discharge summary has a print view. Prescription, lab result and referral letters are not built yet.
+- Reception, cashier and pharmacist see the ward board and (pharmacist) the prescription list, not admission records.
+
+### Assumptions to confirm (from the instructions' open decisions)
+Hand-typed lab results, free-text notes with Plan, adult vital-sign ranges only (paediatric ranges need clinical sign-off),
+a starter formulary and test catalogue (edit in the admin), four starter wards.
+Load a full ICD-10 list with `python manage.py import_icd10 file.csv` (columns `code,title`).
 
 ## Not built yet
 
 - Two-factor login for admins: the flag exists on the user, but no second step is enforced.
-- Break-glass override screen: the audit entry type exists; the screen that asks for a reason comes with the clinical module.
-- Real SMS provider: `SMS_BACKEND` defaults to a console logger. Add a class with `send(to, message)` and point the setting at it.
-- SHA / insurer cover verification (Phase 3): the registration screen has no "verified" status yet.
-- Triage and consultation screens (Phase 2): the queue buttons only move a patient between stages.
+- Real SMS provider: `SMS_BACKEND` defaults to a console logger.
+- SHA / insurer cover verification, billing, dispensing and stock (Phase 3).
+- Radiology image storage, HR and payroll: still open scope items in the plan.
 - Cloud replication (Phase 4).
