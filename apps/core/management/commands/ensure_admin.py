@@ -1,4 +1,5 @@
 """Create or update a full administrator from ADMIN_USERNAME / ADMIN_PASSWORD (safe to run on every deploy)."""
+
 import os
 
 from django.core.management.base import BaseCommand, CommandError
