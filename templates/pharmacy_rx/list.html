@@ -1,1 +1,6 @@
-
+{% extends "base.html" %}{% block title %}Prescriptions{% endblock %}
+{% block content %}<div class="top"><div><h1>Prescriptions waiting</h1><p class="sub">View only for now. Dispensing and stock arrive with the pharmacy module.</p></div></div>
+<div class="card"><table><thead><tr><th>Patient</th><th>Drug</th><th>Dose and route</th><th>How often</th><th>Days</th><th>Quantity</th></tr></thead><tbody>
+{% for p in prescriptions %}<tr><td><b>{{ p.visit.patient.full_name }}</b><small>{{ p.visit.patient.hospital_number }}{% if p.visit.patient.allergies %}. <span class="flag-critical">Allergies: {{ p.visit.patient.allergies }}</span>{% endif %}</small></td>
+<td>{{ p.drug.label }}{% if p.allergy_warning %}<small class="flag-critical">Allergy warning acknowledged</small>{% endif %}</td><td>{{ p.dose }} {{ p.get_route_display }}</td><td>{{ p.get_frequency_display }}</td><td>{{ p.days }}</td><td>{{ p.quantity|floatformat:"-1" }}</td></tr>
+{% empty %}<tr><td colspan="6">Nothing waiting.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
