@@ -13,7 +13,7 @@ def test_skipped_unless_enabled(monkeypatch):
     assert Patient.objects.count() == 0
 
 
-def test_adds_data_once(monkeypatch, doctor, clinic):
+def test_adds_data_once(monkeypatch, doctor, nurse, lab, clinic, beds):
     monkeypatch.setenv("SEED_SAMPLE_DATA", "true")
     call_command("seed_sample_data")
     call_command("seed_sample_data")
@@ -21,3 +21,11 @@ def test_adds_data_once(monkeypatch, doctor, clinic):
     assert QueueEntry.objects.count() == 6
     assert QueueEntry.objects.filter(stage="waiting_triage").count() == 2
     assert Appointment.objects.count() == 3
+    from apps.clinical.models import Visit
+    from apps.orders.models import Order
+    from apps.wards.models import Admission
+
+    assert Visit.objects.filter(triaged_at__isnull=False).count() >= 5
+    assert Admission.objects.filter(status="admitted").count() == 1
+    assert Admission.objects.filter(status="discharged").count() == 1
+    assert Order.objects.filter(status="in_progress").count() == 1

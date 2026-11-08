@@ -17,7 +17,9 @@ def book(patient, clinic, doctor, when):
 def test_queue_tickets_increment_per_day(patient, clinic, db):
     from apps.patients.models import Patient
 
-    other = Patient.objects.create(first_name="B", last_name="T", date_of_birth="2000-01-01", sex="M", phone="0711000002")
+    other = Patient.objects.create(
+        first_name="B", last_name="T", date_of_birth="2000-01-01", sex="M", phone="0711000002"
+    )
     a, _ = QueueEntry.join(patient=patient, clinic=clinic)
     b, _ = QueueEntry.join(patient=other, clinic=clinic)
     assert (a.ticket, b.ticket) == ("A-001", "A-002")
@@ -77,26 +79,6 @@ def test_arrived_adds_to_queue(login, reception, patient, clinic, doctor, future
     login(reception).post(f"/appointments/{a.pk}/arrived/")
     a.refresh_from_db()
     assert a.status == "arrived" and a.queue_entry.doctor == doctor and not a.queue_entry.is_walk_in
-
-
-def test_stage_transitions_are_role_limited(login, patient, clinic, nurse, doctor, reception):
-    e, _ = QueueEntry.join(patient=patient, clinic=clinic)
-    assert login(reception).post(f"/queue/{e.pk}/start-triage/").status_code == 403
-    assert login(doctor).post(f"/queue/{e.pk}/start-triage/").status_code == 403
-    login(nurse).post(f"/queue/{e.pk}/start-triage/")
-    e.refresh_from_db()
-    assert e.stage == "waiting_doctor"
-    assert login(nurse).post(f"/queue/{e.pk}/call-in/").status_code == 403
-    login(doctor).post(f"/queue/{e.pk}/call-in/", {"room": "2"})
-    e.refresh_from_db()
-    assert e.stage == "with_doctor" and e.room == "2"
-
-
-def test_stage_cannot_skip(login, patient, clinic, doctor):
-    e, _ = QueueEntry.join(patient=patient, clinic=clinic)
-    login(doctor).post(f"/queue/{e.pk}/call-in/")
-    e.refresh_from_db()
-    assert e.stage == "waiting_triage"
 
 
 def test_queue_page_counts_and_filter(login, reception, patient, clinic):

@@ -9,8 +9,14 @@ from apps.patients.models import Patient, normalize_phone
 pytestmark = pytest.mark.django_db
 
 FORM = {
-    "first_name": "Brian", "last_name": "Otieno", "date_of_birth": "2019-05-02", "sex": "M",
-    "id_type": "none", "id_number": "", "phone": "0722 111 222", "payer_type": "cash",
+    "first_name": "Brian",
+    "last_name": "Otieno",
+    "date_of_birth": "2019-05-02",
+    "sex": "M",
+    "id_type": "none",
+    "id_number": "",
+    "phone": "0722 111 222",
+    "payer_type": "cash",
 }
 
 
