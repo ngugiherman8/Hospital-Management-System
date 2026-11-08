@@ -29,9 +29,12 @@ def _dupes_for(form):
     d = form.cleaned_data if hasattr(form, "cleaned_data") else {}
     raw = form.data
     return find_duplicates(
-        first_name=raw.get("first_name", ""), last_name=raw.get("last_name", ""),
-        date_of_birth=d.get("date_of_birth"), phone=raw.get("phone", ""),
-        id_type=raw.get("id_type", ""), id_number=raw.get("id_number", ""),
+        first_name=raw.get("first_name", ""),
+        last_name=raw.get("last_name", ""),
+        date_of_birth=d.get("date_of_birth"),
+        phone=raw.get("phone", ""),
+        id_type=raw.get("id_type", ""),
+        id_number=raw.get("id_number", ""),
         exclude_pk=form.instance.pk,
     )
 
@@ -46,8 +49,12 @@ class PatientListView(RoleRequiredMixin, ListView):
         q = self.request.GET.get("q", "").strip()
         qs = Patient.objects.filter(is_active=True)
         if q:
-            cond = (Q(first_name__icontains=q) | Q(last_name__icontains=q)
-                    | Q(hospital_number__icontains=q) | Q(phone__icontains=q))
+            cond = (
+                Q(first_name__icontains=q)
+                | Q(last_name__icontains=q)
+                | Q(hospital_number__icontains=q)
+                | Q(phone__icontains=q)
+            )
             cond |= phone_search_q(q)
             qs = qs.filter(cond)
         return qs
@@ -68,8 +75,13 @@ class PatientCreateView(RoleRequiredMixin, View):
     template_name = "patients/form.html"
 
     def _ctx(self, form, dupes=None):
-        return {"form": form, "dupes": dupes or [], "clinics": Clinic.objects.filter(is_active=True),
-                "doctors": _doctors(), "title": "Register patient"}
+        return {
+            "form": form,
+            "dupes": dupes or [],
+            "clinics": Clinic.objects.filter(is_active=True),
+            "doctors": _doctors(),
+            "title": "Register patient",
+        }
 
     def get(self, request):
         return render(request, self.template_name, self._ctx(PatientForm()))
@@ -99,11 +111,17 @@ class PatientDetailView(RoleRequiredMixin, View):
     def get(self, request, pk):
         patient = get_object_or_404(Patient, pk=pk)
         log_event("view", patient)  # every view of a record is audited
-        return render(request, "patients/detail.html", {
-            "patient": patient, "cover": patient.covers.first(),
-            "appointments": patient.appointments.select_related("clinic", "doctor")[:10],
-            "clinics": Clinic.objects.filter(is_active=True), "doctors": _doctors(),
-        })
+        return render(
+            request,
+            "patients/detail.html",
+            {
+                "patient": patient,
+                "cover": patient.covers.first(),
+                "appointments": patient.appointments.select_related("clinic", "doctor")[:10],
+                "clinics": Clinic.objects.filter(is_active=True),
+                "doctors": _doctors(),
+            },
+        )
 
 
 class PatientEditView(RoleRequiredMixin, View):
@@ -111,17 +129,27 @@ class PatientEditView(RoleRequiredMixin, View):
 
     def get(self, request, pk):
         patient = get_object_or_404(Patient, pk=pk)
-        return render(request, "patients/form.html",
-                      {"form": PatientForm(instance=patient), "dupes": [], "title": f"Edit {patient.full_name}",
-                       "editing": True, "patient": patient})
+        return render(
+            request,
+            "patients/form.html",
+            {
+                "form": PatientForm(instance=patient),
+                "dupes": [],
+                "title": f"Edit {patient.full_name}",
+                "editing": True,
+                "patient": patient,
+            },
+        )
 
     def post(self, request, pk):
         patient = get_object_or_404(Patient, pk=pk)
         form = PatientForm(request.POST, instance=patient)
         if not form.is_valid():
-            return render(request, "patients/form.html",
-                          {"form": form, "dupes": [], "title": f"Edit {patient.full_name}",
-                           "editing": True, "patient": patient})
+            return render(
+                request,
+                "patients/form.html",
+                {"form": form, "dupes": [], "title": f"Edit {patient.full_name}", "editing": True, "patient": patient},
+            )
         with transaction.atomic():
             form.save()
             form.save_cover(patient)

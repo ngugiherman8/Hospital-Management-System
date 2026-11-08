@@ -3,6 +3,7 @@
 A candidate is reported when it shares an ID document, shares a phone number,
 or has a similar name and the same date of birth.
 """
+
 from difflib import SequenceMatcher
 
 from django.db.models import Q
@@ -17,8 +18,7 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-def find_duplicates(*, first_name, last_name, date_of_birth=None, phone="", id_type="", id_number="",
-                    exclude_pk=None):
+def find_duplicates(*, first_name, last_name, date_of_birth=None, phone="", id_type="", id_number="", exclude_pk=None):
     phone_n = normalize_phone(phone)
     id_number = (id_number or "").strip()
 
@@ -48,8 +48,11 @@ def find_duplicates(*, first_name, last_name, date_of_birth=None, phone="", id_t
         sim = _similarity(wanted, normalize_name(p.first_name, p.last_name))
         # allow extra middle/other names: compare also first+last token overlap
         if sim < NAME_THRESHOLD and wanted and p.full_name:
-            sim = max(sim, _similarity(wanted.split()[0], p.first_name.lower())
-                      * _similarity(wanted.split()[-1], p.last_name.lower()))
+            sim = max(
+                sim,
+                _similarity(wanted.split()[0], p.first_name.lower())
+                * _similarity(wanted.split()[-1], p.last_name.lower()),
+            )
         if date_of_birth and p.date_of_birth == date_of_birth and sim >= NAME_THRESHOLD:
             reasons.append("Similar name and date of birth")
             score += 1 + sim

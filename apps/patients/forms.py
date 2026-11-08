@@ -7,17 +7,27 @@ from .models import IdType, InsuranceCover, Patient, PayerType, normalize_phone
 
 
 class PatientForm(forms.ModelForm):
-    payer_type = forms.ChoiceField(choices=PayerType.choices, initial=PayerType.CASH,
-                                   widget=forms.RadioSelect, label="How will the patient pay?")
+    payer_type = forms.ChoiceField(
+        choices=PayerType.choices, initial=PayerType.CASH, widget=forms.RadioSelect, label="How will the patient pay?"
+    )
     insurer_name = forms.CharField(required=False, max_length=120, label="Insurer or company")
     member_number = forms.CharField(required=False, max_length=60, label="Member number")
 
     class Meta:
         model = Patient
         fields = [
-            "first_name", "last_name", "date_of_birth", "sex", "id_type", "id_number",
-            "phone", "area_of_residence", "next_of_kin_name", "next_of_kin_relationship",
-            "next_of_kin_phone", "allergies",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "sex",
+            "id_type",
+            "id_number",
+            "phone",
+            "area_of_residence",
+            "next_of_kin_name",
+            "next_of_kin_relationship",
+            "next_of_kin_phone",
+            "allergies",
         ]
         widgets = {"date_of_birth": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d")}
         labels = {
@@ -34,8 +44,9 @@ class PatientForm(forms.ModelForm):
         if self.instance.pk:
             cover = self.instance.covers.filter(is_primary=True).first()
             if cover:
-                self.initial.update(payer_type=cover.payer_type, insurer_name=cover.insurer_name,
-                                    member_number=cover.member_number)
+                self.initial.update(
+                    payer_type=cover.payer_type, insurer_name=cover.insurer_name, member_number=cover.member_number
+                )
 
     def clean_date_of_birth(self):
         dob = self.cleaned_data["date_of_birth"]
