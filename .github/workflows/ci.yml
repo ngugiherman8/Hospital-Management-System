@@ -22,9 +22,16 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Lint
         run: ruff check .
+      - name: Formatting
+        run: ruff format --check .
       - name: Migrations are up to date
         run: python manage.py makemigrations --check --dry-run
         env: {DJANGO_SETTINGS_MODULE: config.settings.test}
+      - name: Production settings check
+        run: python manage.py check --deploy --fail-level WARNING
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          DJANGO_SECRET_KEY: ci-only-long-random-secret-key-0123456789-abcdefghijklmnopqrstuvwxyz
       - name: Tests
         run: pytest
 
