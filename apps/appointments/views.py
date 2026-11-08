@@ -1,18 +1,20 @@
 from datetime import timedelta
 
 from django.contrib import messages
-from django.db.models import Count, Q
+from django.db import transaction
+from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views import View
 from django.views.decorators.http import require_POST
 
-from apps.core.permissions import CLINICAL, FRONT_DESK, FRONT_DESK_AND_CLINICAL, RoleRequiredMixin
+from apps.core.audit import log_event
+from apps.core.permissions import FRONT_DESK, FRONT_DESK_AND_CLINICAL, RoleRequiredMixin
 from apps.patients.models import Patient
 from apps.patients.views import phone_search_q
 
 from .forms import AppointmentForm
-from .models import STAGE_GROUPS, Appointment, AppointmentStatus, Clinic, QueueEntry, Stage
+from .models import STAGE_GROUPS, Appointment, AppointmentStatus, Clinic, QueueEntry, Stage, TransitionError
 
 
 class QueueView(RoleRequiredMixin, View):
@@ -20,7 +22,7 @@ class QueueView(RoleRequiredMixin, View):
 
     def get(self, request):
         today = timezone.localdate()
-        entries = QueueEntry.objects.filter(queue_date=today).select_related("patient", "clinic")
+        entries = QueueEntry.objects.filter(queue_date=today).select_related("patient", "clinic", "visit")
         counts = entries.aggregate(
             triage=Count("id", filter=Q(stage=Stage.WAITING_TRIAGE)),
             doctor=Count("id", filter=Q(stage=Stage.WAITING_DOCTOR)),
@@ -28,16 +30,38 @@ class QueueView(RoleRequiredMixin, View):
             done=Count("id", filter=Q(stage=Stage.DONE)),
         )
         tab = request.GET.get("tab", "all")
-        shown = entries.exclude(stage=Stage.DONE)
+        # Emergency first, then urgent, then routine; within each, first come first served.
+        rank = Case(
+            When(visit__priority="emergency", then=Value(0)),
+            When(visit__priority="urgent", then=Value(1)),
+            default=Value(2),
+            output_field=IntegerField(),
+        )
+        shown = entries.exclude(stage=Stage.DONE).annotate(rank=rank).order_by("rank", "number")
         if tab in STAGE_GROUPS:
             shown = shown.filter(stage__in=STAGE_GROUPS[tab])
         q = request.GET.get("q", "").strip()
         if q:
-            shown = shown.filter(Q(patient__first_name__icontains=q) | Q(patient__last_name__icontains=q)
-                                 | Q(patient__hospital_number__icontains=q) | Q(patient__phone__icontains=q)
-                                 | Q(patient__in=Patient.objects.filter(phone_search_q(q))))
-        ctx = {"entries": shown, "counts": counts, "tab": tab, "q": q, "today": timezone.localdate(),
-               "tabs": [("all", "All"), ("triage", "Triage"), ("doctor", "Doctor"), ("lab", "Lab and pharmacy")]}
+            shown = shown.filter(
+                Q(patient__first_name__icontains=q)
+                | Q(patient__last_name__icontains=q)
+                | Q(patient__hospital_number__icontains=q)
+                | Q(patient__phone__icontains=q)
+                | Q(patient__in=Patient.objects.filter(phone_search_q(q)))
+            )
+        u = request.user
+        ctx = {
+            "entries": shown,
+            "counts": counts,
+            "tab": tab,
+            "q": q,
+            "today": timezone.localdate(),
+            "is_nurse": u.has_role("nurse"),
+            "is_doctor": u.has_role("doctor"),
+            "is_reception": u.has_role("receptionist"),
+            "is_lab": u.has_role("lab"),
+            "tabs": [("all", "All"), ("triage", "Triage"), ("doctor", "Doctor"), ("lab", "Lab and pharmacy")],
+        }
         template = "appointments/_queue_table.html" if request.htmx else "appointments/queue.html"
         return render(request, template, ctx)
 
@@ -56,31 +80,28 @@ class WalkInView(RoleRequiredMixin, View):
         return redirect("queue")
 
 
-class StageView(RoleRequiredMixin, View):
-    """Move a queue entry on: nurses start triage, doctors call patients in."""
+class FastTrackView(RoleRequiredMixin, View):
+    """Reception sends an emergency straight to a doctor with a reason. The nurse completes triage afterwards."""
 
-    allowed_roles = CLINICAL
-    transitions = {
-        "start-triage": ({Stage.WAITING_TRIAGE}, Stage.WAITING_DOCTOR, ("admin", "nurse")),
-        "call-in": ({Stage.WAITING_DOCTOR}, Stage.WITH_DOCTOR, ("admin", "doctor")),
-        "to-lab": ({Stage.WITH_DOCTOR}, Stage.AT_LAB, ("admin", "doctor")),
-        "finish": ({Stage.WITH_DOCTOR, Stage.AT_LAB}, Stage.DONE, ("admin", "doctor")),
-    }
+    allowed_roles = FRONT_DESK
+    http_method_names = ["post"]
 
-    def post(self, request, pk, action):
-        from django.core.exceptions import PermissionDenied
-        from django.http import Http404
+    def post(self, request, pk):
+        from apps.clinical.models import Visit
 
-        if action not in self.transitions:
-            raise Http404
-        entry = get_object_or_404(QueueEntry, pk=pk)
-        allowed_from, to_stage, roles = self.transitions[action]
-        if not request.user.has_role(*roles):
-            raise PermissionDenied
-        if entry.stage not in allowed_from:
-            messages.error(request, f"{entry.ticket} is not at the right stage for that.")
-        else:
-            entry.move_to(to_stage, room=request.POST.get("room", ""))
+        entry = get_object_or_404(QueueEntry.objects.select_related("patient"), pk=pk)
+        reason = request.POST.get("reason", "").strip()
+        try:
+            with transaction.atomic():
+                entry.apply("fast_track", request.user, reason=reason)
+                visit = Visit.for_queue_entry(entry)
+                visit.priority, visit.fast_track_reason = "emergency", reason[:200]
+                visit.save()
+                log_event("update", entry, reason=f"Emergency fast-track: {reason}")
+        except TransitionError as e:
+            messages.error(request, str(e))
+            return redirect("queue")
+        messages.warning(request, f"{entry.ticket} {entry.patient.full_name} sent straight to the doctor.")
         return redirect("queue")
 
 
@@ -94,8 +115,9 @@ class AppointmentListView(RoleRequiredMixin, View):
         except ValueError:
             day = timezone.localdate()
         start = timezone.make_aware(timezone.datetime.combine(day, timezone.datetime.min.time()))
-        qs = Appointment.objects.filter(starts_at__gte=start, starts_at__lt=start + timedelta(days=1)
-                                        ).select_related("patient", "doctor", "clinic")
+        qs = Appointment.objects.filter(starts_at__gte=start, starts_at__lt=start + timedelta(days=1)).select_related(
+            "patient", "doctor", "clinic"
+        )
         if request.user.role == "doctor":
             qs = qs.filter(doctor=request.user)
         return render(request, "appointments/list.html", {"appointments": qs, "day": day})
