@@ -1,4 +1,5 @@
 """Base settings shared by local, test and production."""
+
 import os
 from pathlib import Path
 
@@ -29,6 +30,10 @@ INSTALLED_APPS = [
     "apps.core",
     "apps.patients",
     "apps.appointments",
+    "apps.clinical",
+    "apps.orders",
+    "apps.pharmacy_rx",
+    "apps.wards",
 ]
 
 MIDDLEWARE = [
@@ -95,8 +100,7 @@ if env("DATABASE_URL"):
 AUTH_USER_MODEL = "core.User"
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-     "OPTIONS": {"min_length": 10}},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
