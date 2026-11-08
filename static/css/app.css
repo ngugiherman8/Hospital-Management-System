@@ -24,3 +24,28 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 .pay label:has(input:checked){border:2px solid var(--teal);background:#e5f3f0}
 .login{margin:auto;width:360px}.dl{display:grid;grid-template-columns:150px 1fr;gap:6px 12px}.dl dt{color:var(--muted)}.dl dd{margin:0}
 @media(max-width:900px){body{flex-direction:column}.side{width:auto;height:auto;position:static;flex-direction:row;flex-wrap:wrap}.layout,.grid2,.stats,.pay{grid-template-columns:1fr}main{padding:16px}}
+/* ---- Phase 2: clinical ---- */
+.p-admitted{background:#dff3f1;color:#0b4f4a}.tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:700;margin-left:6px}
+.tag.emergency{background:#fde8e6;color:var(--danger)}.tag.urgent{background:#fff3d0;color:#6b4a00}
+.banner{display:flex;flex-wrap:wrap;gap:8px 28px;align-items:flex-start}.banner .who{min-width:200px}.banner small,.muted{color:var(--muted)}
+.banner dl{margin:0}.banner dt{font-size:13px;color:var(--muted)}.banner dd{margin:0;font-weight:700}
+.flag-high,.flag-low{color:#9a4a00;font-weight:700}.flag-critical{color:var(--danger);font-weight:700}
+.vgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.vgrid .full{grid-column:1/-1}
+input.alert-field{border:2px solid #b45309}.hint{font-size:13px;font-weight:700;color:#9a4a00;margin-top:3px;min-height:1em}
+.pain{display:flex;gap:8px;flex-wrap:wrap}.pain button{width:46px;height:42px;border:1px solid #8a9aa1;border-radius:8px;background:#fff;font:inherit;cursor:pointer}
+.pain button[aria-pressed=true]{border:2px solid var(--teal);background:#e5f3f0;font-weight:700}
+.opts label{display:flex;gap:10px;align-items:center;border:1px solid #8a9aa1;border-radius:8px;padding:12px;margin-bottom:10px;font-weight:500;cursor:pointer}
+.opts label:has(input:checked){border:2px solid var(--teal);background:#e5f3f0;font-weight:700}.opts input{width:auto}
+.warnbox{background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:12px}.warnbox.danger{background:#fde8e6;border-color:var(--danger)}
+.chip{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--teal);background:#e5f3f0;border-radius:99px;padding:6px 8px 6px 14px;margin:0 8px 8px 0;font-weight:600}
+.chip form{display:inline}.chip button,.linkbtn{background:none;border:0;color:var(--teal);cursor:pointer;font:inherit;text-decoration:underline;padding:0 4px}
+.item{border:1px solid #dfe6e8;border-radius:10px;padding:12px;margin-bottom:10px}.item .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+textarea:disabled,input:disabled,select:disabled{background:#f2f5f5;color:var(--ink)}
+.beds{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.bed{border:1px solid #8a9aa1;border-radius:10px;padding:10px;background:#fff;min-height:84px}
+.bed.occupied{background:#e8f1fb;border-color:#6b94c4}.bed.cleaning{background:var(--amber-bg);border-color:var(--amber)}.bed b{display:block}
+.meter{height:8px;background:#e5e9ea;border-radius:99px;overflow:hidden;margin:6px 0 14px}.meter i{display:block;height:100%;background:var(--teal)}
+details summary{cursor:pointer;color:var(--teal);font-weight:600}.old{color:var(--muted);border-left:3px solid var(--line);padding-left:10px;margin:6px 0}
+.timeline{border-left:3px solid var(--line);margin-left:6px;padding-left:18px}.timeline .card{position:relative}
+.timeline .card::before{content:"";position:absolute;left:-28px;top:24px;width:12px;height:12px;border-radius:50%;background:var(--teal)}
+@media print{.side,.noprint,.btn{display:none!important}body{display:block;background:#fff}main{padding:0;max-width:none}.card{border:0;padding:0}}
+@media(max-width:900px){.vgrid{grid-template-columns:1fr}}
