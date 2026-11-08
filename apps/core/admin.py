@@ -18,9 +18,15 @@ admin.site.register(Department)
 
 @admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):
-    list_display = ("at", "user", "action", "object_repr", "needs_review")
+    list_display = ("at", "user", "action", "object_repr", "reason", "needs_review")
     list_filter = ("action", "needs_review")
-    search_fields = ("object_repr", "user__username")
+    search_fields = ("object_repr", "user__username", "reason")
+    actions = ["mark_reviewed"]
+
+    @admin.action(description="Mark selected emergency accesses as reviewed")
+    def mark_reviewed(self, request, queryset):
+        n = queryset.filter(needs_review=True).update(needs_review=False, reviewed_by=request.user)
+        self.message_user(request, f"{n} entr{'y' if n == 1 else 'ies'} marked as reviewed.")
 
     def has_add_permission(self, request):
         return False

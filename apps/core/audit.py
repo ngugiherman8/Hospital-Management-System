@@ -3,6 +3,7 @@
 Any model that subclasses AuditedModel gets create/update/delete entries written
 for free. Views, prints and emergency overrides are logged with log_event().
 """
+
 import threading
 
 from django.contrib.contenttypes.models import ContentType
@@ -59,6 +60,11 @@ def log_event(action, obj=None, *, reason="", changes=None, needs_review=False, 
         ip_address=ip or get_ip(),
         needs_review=needs_review,
     )
+
+
+def log_access(obj, reason=""):
+    """Record that a user opened a clinical record."""
+    return log_event("view", obj, reason=reason)
 
 
 @receiver(pre_save)
