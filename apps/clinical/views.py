@@ -190,10 +190,7 @@ class ConsultView(RoleRequiredMixin, View):
             messages.success(request, "Draft saved.")
             return redirect("clinical:consult", entry_pk=entry.pk)
         if visit.outcome == Outcome.ADMIT:
-            if not visit.diagnoses.exists():
-                messages.error(request, "Add at least one diagnosis first.")
-                return redirect("clinical:consult", entry_pk=entry.pk)
-            return redirect("wards:admit_visit", visit_pk=visit.pk)
+            return redirect("wards:admit_visit", visit_pk=visit.pk)  # choose the ward and bed next
         try:
             entry.apply("complete", request.user)
         except TransitionError as e:
