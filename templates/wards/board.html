@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}Ward board{% endblock %}
+{% block content %}<div class="top"><div><h1>Ward board</h1><p class="sub">{{ occupied }} of {{ total }} beds occupied, {{ free }} free.</p></div></div>
+{% for w in wards %}<section class="card"><div style="display:flex;justify-content:space-between"><h2 style="margin:0">{{ w.ward.name }} <small class="muted">({{ w.ward.get_ward_type_display }})</small></h2><span class="muted">{{ w.occupied }} / {{ w.total }}</span></div>
+<div class="meter"><i style="width:{% widthratio w.occupied w.total 100 %}%"></i></div>
+<div class="beds">{% for b in w.beds %}<div class="bed {{ b.bed.status }}"><b>{{ b.bed.number }}</b>
+{% if b.adm %}{% if can_open %}<a href="{% url 'wards:admission' b.adm.pk %}">{{ b.adm.patient.full_name }}</a>{% else %}{{ b.adm.patient.full_name }}{% endif %}<br><small class="muted">Day {{ b.adm.days_in_ward }}</small>
+{% elif b.bed.status == 'cleaning' %}<small>Being cleaned</small>{% if can_release %}<form method="post" action="{% url 'wards:bed_ready' b.bed.pk %}" style="margin-top:4px">{% csrf_token %}<button class="btn sm">Ready</button></form>{% endif %}
+{% else %}<small class="muted">Free</small>{% endif %}</div>{% endfor %}</div></section>
+{% empty %}<div class="card">No wards set up yet. Add them in the admin.</div>{% endfor %}{% endblock %}

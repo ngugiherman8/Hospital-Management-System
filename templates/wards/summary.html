@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block title %}Discharge summary{% endblock %}
+{% block content %}<div class="top noprint"><div><h1>Discharge summary</h1></div><div><a class="btn" href="{% url 'wards:admission' adm.pk %}">Back to admission</a> <button class="btn primary" onclick="window.print()">Print</button></div></div>
+<section class="card"><h2 style="font-size:20px">{{ HOSPITAL_NAME }}: Discharge summary</h2>
+<dl class="dl"><dt>Patient</dt><dd><b>{{ patient.full_name }}</b>, {{ patient.get_sex_display }}, {{ patient.age }} years</dd><dt>Hospital no.</dt><dd>{{ patient.hospital_number }}</dd><dt>Admission</dt><dd>{{ adm.number }}</dd>
+<dt>Admitted</dt><dd>{{ adm.admitted_at|date:"j F Y, H:i" }}</dd><dt>Discharged</dt><dd>{% if adm.discharged_at %}{{ adm.discharged_at|date:"j F Y, H:i" }}, by {{ adm.discharged_by|default:"-" }}{% else %}Still in ward{% endif %}</dd>
+<dt>Ward and bed</dt><dd>{{ adm.bed }}{% if moves|length > 1 %} (moved {{ moves|length|add:"-1" }} time{{ moves|length|add:"-1"|pluralize }}){% endif %}</dd>
+<dt>Allergies</dt><dd>{{ patient.allergies|default:"None recorded" }}</dd><dt>Condition</dt><dd>{{ adm.get_condition_at_discharge_display|default:"-" }}</dd></dl>
+<h2 style="margin-top:18px">Reason for admission</h2><p>{{ adm.reason|linebreaksbr }}</p>
+<h2>Diagnosis</h2><p>{% for d in diagnoses %}{{ d.icd10.code }} {{ d.icd10.title }} ({{ d.get_kind_display|lower }}){% if not forloop.last %}<br>{% endif %}{% empty %}-{% endfor %}</p>
+<h2>Course in hospital</h2><p>{{ adm.summary|linebreaksbr|default:"-" }}</p>
+{% if orders %}<h2>Tests</h2><p>{% for o in orders %}{{ o.test.name }}: {% if o.result %}{{ o.result.value }} {{ o.result.unit }} ({{ o.result.get_flag_display|lower }}){% else %}{{ o.get_status_display|lower }}{% endif %}{% if not forloop.last %}<br>{% endif %}{% endfor %}</p>{% endif %}
+<h2>Medicines in hospital</h2><p>{% for p in prescriptions %}{{ p.drug.label }}, {{ p.dose }} {{ p.get_route_display }}, {{ p.get_frequency_display|lower }} for {{ p.days }} days{% if not forloop.last %}<br>{% endif %}{% empty %}-{% endfor %}</p>
+<h2>Medicines to take home</h2><p>{{ adm.discharge_medication|linebreaksbr|default:"-" }}</p>
+<h2>Follow-up</h2><p>{{ adm.follow_up|linebreaksbr|default:"-" }}</p></section>{% endblock %}

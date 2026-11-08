@@ -1,1 +1,7 @@
-
+{% extends "base.html" %}{% block title %}Admit patient{% endblock %}
+{% block content %}<h1>Admit to ward</h1><p class="sub">{{ patient.full_name }}, {{ patient.hospital_number }}{% if patient.allergies %}. <b class="flag-critical">Allergies: {{ patient.allergies }}</b>{% endif %}</p>
+<form method="post" class="card" style="max-width:560px" novalidate>{% csrf_token %}
+{% for e in form.non_field_errors %}<div class="err">{{ e }}</div>{% endfor %}
+<div class="field"><label for="{{ form.bed.id_for_label }}">{{ form.bed.label }}</label>{{ form.bed }}{% for e in form.bed.errors %}<div class="err">{{ e }}</div>{% endfor %}{% if not form.bed.field.queryset.exists %}<div class="err">No free beds. Ask a nurse to release cleaned beds on the ward board.</div>{% endif %}</div>
+<div class="field"><label for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>{{ form.reason }}{% for e in form.reason.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>
+<a class="btn" href="{% if visit and visit.queue_entry_id %}{% url 'clinical:consult' visit.queue_entry_id %}{% else %}{{ patient.get_absolute_url }}{% endif %}">Cancel</a> <button class="btn primary" type="submit">Admit</button></form>{% endblock %}
