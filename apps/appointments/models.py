@@ -63,7 +63,7 @@ class Stage(models.TextChoices):
     WAITING_TRIAGE = "waiting_triage", "Waiting for triage"
     WAITING_DOCTOR = "waiting_doctor", "Waiting for doctor"
     WITH_DOCTOR = "with_doctor", "With doctor"
-    AT_LAB = "at_lab", "At lab"
+    AT_LAB = "at_lab", "Awaiting results"
     ADMITTED = "admitted", "Admitted"
     DONE = "done", "Completed"
 
