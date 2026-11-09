@@ -2,6 +2,8 @@ from django.contrib.auth.models import AbstractUser
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 
+from .audit import AuditedModel  # noqa: E402,F401  (the instructions import it from here)
+
 
 class Department(models.Model):
     name = models.CharField(max_length=80, unique=True)
@@ -31,8 +33,10 @@ class User(AbstractUser):
     department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.SET_NULL, related_name="staff")
     phone = models.CharField(max_length=20, blank=True)
     two_factor_required = models.BooleanField(
-        default=False, help_text="Optional second factor, expected for administrators."
+        default=False, help_text="Ask this user for a one-time code at sign-in (always on for administrators)."
     )
+    totp_secret = models.CharField(max_length=64, blank=True, editable=False)
+    totp_confirmed_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     def has_role(self, *roles):
         return self.is_superuser or self.role == Role.ADMIN or self.role in roles
