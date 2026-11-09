@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}Billing{% endblock %}
+{% block content %}<div class="top"><div><h1>Billing</h1><p class="sub">Invoices, payments and receipts.</p></div></div>
+<div class="card" style="padding:0"><div class="tabs">{% for key, label in tabs %}<a class="btn {% if tab == key %}on{% endif %}" href="?tab={{ key }}">{{ label }}</a>{% endfor %}
+<form method="get" class="search"><input type="hidden" name="tab" value="{{ tab }}"><label for="q" style="margin:0">Search</label><input id="q" type="search" name="q" value="{{ q }}" placeholder="Name, hospital no. or invoice no."></form></div>
+<table><thead><tr><th>Invoice</th><th>Patient</th><th>Payer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody>
+{% for i in invoices %}<tr><td><b>{{ i.number }}</b><small>{{ i.created_at|date:"j M H:i" }}</small></td><td>{{ i.patient.full_name }}<small>{{ i.patient.hospital_number }}</small></td><td>{{ i.payer }}</td>
+<td>{{ i.total|floatformat:2 }}</td><td>{{ i.paid|floatformat:2 }}</td><td><b>{{ i.balance|floatformat:2 }}</b></td><td><span class="pill {% if i.status == 'paid' %}p-with_doctor{% elif i.status == 'void' %}p-done{% elif i.status == 'draft' %}p-waiting_triage{% else %}p-waiting_doctor{% endif %}">{{ i.get_status_display }}</span></td>
+<td style="text-align:right"><a class="btn sm" href="{% url 'billing:detail' i.pk %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="8">No invoices here.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}

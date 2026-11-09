@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block title %}{{ invoice.number }}{% endblock %}
+{% block content %}<div class="top noprint"><h1>Invoice</h1><div><a class="btn" href="{% url 'billing:detail' invoice.pk %}">Back</a> <button class="btn primary" onclick="window.print()">Print</button></div></div>
+<section class="card"><h2 style="font-size:20px">{{ HOSPITAL_NAME }}: Invoice {{ invoice.number }}{% if invoice.is_void %} (VOID){% endif %}</h2>
+<dl class="dl"><dt>Patient</dt><dd><b>{{ patient.full_name }}</b> ({{ patient.hospital_number }})</dd><dt>Date</dt><dd>{{ invoice.created_at|date:"j F Y" }}</dd><dt>Payer</dt><dd>{{ invoice.payer }}</dd></dl>
+<table style="margin-top:12px"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Amount (KES)</th></tr></thead><tbody>{% for l in lines %}{% if not l.is_removed %}<tr><td>{{ l.description }}</td><td>{{ l.quantity|floatformat:"-2" }}</td><td>{{ l.unit_price|floatformat:2 }}</td><td>{{ l.amount|floatformat:2 }}</td></tr>{% endif %}{% endfor %}</tbody>
+<tfoot><tr><th colspan="3" style="text-align:right">Total</th><th>{{ invoice.total|floatformat:2 }}</th></tr><tr><th colspan="3" style="text-align:right">Paid</th><th>{{ invoice.paid|floatformat:2 }}</th></tr><tr><th colspan="3" style="text-align:right">Balance</th><th>{{ invoice.balance|floatformat:2 }}</th></tr></tfoot></table></section>{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block title %}{{ pay.receipt_number }}{% endblock %}
+{% block content %}<div class="top noprint"><h1>{% if pay.is_refund %}Refund{% else %}Receipt{% endif %}</h1><div><a class="btn" href="{% url 'billing:detail' invoice.pk %}">Back to invoice</a> <button class="btn primary" onclick="window.print()">Print</button></div></div>
+<section class="card" style="max-width:520px"><h2 style="font-size:20px">{{ HOSPITAL_NAME }}</h2><p style="margin:0"><b>{% if pay.is_refund %}Refund{% else %}Receipt{% endif %} {{ pay.receipt_number }}</b></p>
+<dl class="dl" style="margin-top:10px"><dt>Date</dt><dd>{{ pay.received_at|date:"j F Y, H:i" }}</dd><dt>Patient</dt><dd>{{ patient.full_name }} ({{ patient.hospital_number }})</dd><dt>Invoice</dt><dd>{{ invoice.number }}</dd>
+<dt>Method</dt><dd>{{ pay.get_method_display }}{% if pay.mpesa_code %} {{ pay.mpesa_code }}{% endif %}{% if pay.is_deposit %} (deposit){% endif %}</dd>
+<dt>Amount</dt><dd><b>KES {{ pay.amount|floatformat:2 }}</b></dd><dt>Invoice balance</dt><dd>KES {{ invoice.balance|floatformat:2 }}</dd><dt>Received by</dt><dd>{{ pay.received_by|default:"-" }}</dd>
+{% if pay.refund_reason %}<dt>Reason</dt><dd>{{ pay.refund_reason }}</dd>{% endif %}</dl></section>{% endblock %}
