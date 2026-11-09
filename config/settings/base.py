@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "apps.orders",
     "apps.pharmacy_rx",
     "apps.wards",
+    "apps.billing",
 ]
 
 MIDDLEWARE = [
@@ -105,12 +106,18 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# Login lockout and two-factor sign-in for administrators
+LOGIN_LOCKOUT_ATTEMPTS = 5
+LOGIN_LOCKOUT_MINUTES = 15
+ADMIN_TWO_FACTOR = env_bool("ADMIN_TWO_FACTOR", True)
+TWO_FACTOR_ISSUER = env("TWO_FACTOR_ISSUER", "Hospital system")
+
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "queue"
 LOGOUT_REDIRECT_URL = "login"
 
-# Automatic session timeout: 20 minutes of inactivity.
-SESSION_COOKIE_AGE = 20 * 60
+# Automatic sign-out after 30 minutes of inactivity.
+SESSION_COOKIE_AGE = 30 * 60
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
@@ -156,3 +163,13 @@ LOGGING = {
     "root": {"handlers": ["console"], "level": "WARNING"},
     "loggers": {"django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False}},
 }
+
+# M-Pesa (Safaricom Daraja). Leave empty until the hospital has developer access; cashiers can type in
+# the M-Pesa code by hand in the meantime. The callback URL contains a secret token.
+MPESA_ENV = env("MPESA_ENV", "sandbox")
+MPESA_CONSUMER_KEY = env("MPESA_CONSUMER_KEY", "")
+MPESA_CONSUMER_SECRET = env("MPESA_CONSUMER_SECRET", "")
+MPESA_SHORTCODE = env("MPESA_SHORTCODE", "")
+MPESA_PASSKEY = env("MPESA_PASSKEY", "")
+MPESA_CALLBACK_TOKEN = env("MPESA_CALLBACK_TOKEN", "")
+MPESA_CALLBACK_BASE = env("MPESA_CALLBACK_BASE", "")  # e.g. https://hms.example.org
