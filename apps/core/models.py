@@ -1,144 +1,112 @@
-from django.contrib.auth.models import AbstractUser
-from django.contrib.contenttypes.models import ContentType
-from django.db import models
+from django.conf import settings
+from django.db import models, transaction
+from django.utils import timezone
 
-from .audit import AuditedModel  # noqa: E402,F401  (the instructions import it from here)
+from apps.core.audit import AuditedModel
+from apps.core.models import Sequence
 
 
-class Department(models.Model):
-    name = models.CharField(max_length=80, unique=True)
-    code = models.SlugField(max_length=40, unique=True)
+class TestCatalogue(models.Model):
+    """A test or procedure that can be ordered."""
+
+    __test__ = False  # not a pytest test class
+
+    class Kind(models.TextChoices):
+        LAB = "lab", "Laboratory"
+        RADIOLOGY = "radiology", "Radiology"
+        PROCEDURE = "procedure", "Procedure"
+
+    name = models.CharField(max_length=120, unique=True)
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.LAB)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Placeholder until Billing")
+    normal_range = models.CharField(max_length=120, blank=True)
+    sample_type = models.CharField(max_length=60, blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["kind", "name"]
 
     def __str__(self):
         return self.name
 
 
-class Role(models.TextChoices):
-    ADMIN = "admin", "Administrator"
-    RECEPTIONIST = "receptionist", "Receptionist"
-    DOCTOR = "doctor", "Doctor"
-    NURSE = "nurse", "Nurse"
-    LAB = "lab", "Lab staff"
-    PHARMACIST = "pharmacist", "Pharmacist"
-    CASHIER = "cashier", "Cashier"
+class Order(AuditedModel):
+    class Status(models.TextChoices):
+        ORDERED = "ordered", "Ordered"
+        IN_PROGRESS = "in_progress", "In progress"
+        RESULTED = "resulted", "Result in"
+        CANCELLED = "cancelled", "Cancelled"
 
+    PREFIX = {"lab": "LAB", "radiology": "RAD", "procedure": "PRC"}
 
-class User(AbstractUser):
-    """Staff user. One role plus a department scope."""
-
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.RECEPTIONIST)
-    department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.SET_NULL, related_name="staff")
-    phone = models.CharField(max_length=20, blank=True)
-    two_factor_required = models.BooleanField(
-        default=False, help_text="Ask this user for a one-time code at sign-in (always on for administrators)."
-    )
-    totp_secret = models.CharField(max_length=64, blank=True, editable=False)
-    totp_confirmed_at = models.DateTimeField(null=True, blank=True, editable=False)
-
-    def has_role(self, *roles):
-        return self.is_superuser or self.role == Role.ADMIN or self.role in roles
-
-    @property
-    def is_clinician(self):
-        return self.role in (Role.DOCTOR, Role.NURSE)
-
-    def __str__(self):
-        return self.get_full_name() or self.username
-
-
-class Sequence(models.Model):
-    """Gap-free counters (order numbers, admission numbers). Always call inside the caller's transaction so a
-    rolled-back save does not burn a number."""
-
-    name = models.CharField(max_length=60, unique=True)
-    last_value = models.PositiveBigIntegerField(default=0)
-
-    @classmethod
-    def next(cls, name: str) -> int:
-        from django.db import IntegrityError, transaction
-
-        for attempt in range(2):
-            try:
-                with transaction.atomic():
-                    seq, _ = cls.objects.select_for_update().get_or_create(name=name)
-                    seq.last_value += 1
-                    seq.save(update_fields=["last_value"])
-                    return seq.last_value
-            except IntegrityError:  # two requests created the row at once; the second retries
-                if attempt:
-                    raise
-
-    @classmethod
-    def next_number(cls, prefix: str) -> str:
-        """e.g. LAB-2026-000123, restarting each year."""
-        from django.utils import timezone
-
-        year = timezone.localdate().year
-        return f"{prefix}-{year}-{cls.next(f'{prefix}-{year}'):06d}"
-
-    def __str__(self):
-        return f"{self.name}: {self.last_value}"
-
-
-class LoginEvent(models.Model):
-    """Login history: successful logins, logouts and failed attempts."""
-
-    class Kind(models.TextChoices):
-        LOGIN = "login", "Login"
-        LOGOUT = "logout", "Logout"
-        FAILED = "failed", "Failed attempt"
-
-    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="login_events")
-    username = models.CharField(max_length=150, blank=True)
-    kind = models.CharField(max_length=10, choices=Kind.choices)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    at = models.DateTimeField(auto_now_add=True)
+    number = models.CharField(max_length=24, unique=True, editable=False)
+    visit = models.ForeignKey("clinical.Visit", on_delete=models.CASCADE, related_name="orders")
+    test = models.ForeignKey(TestCatalogue, on_delete=models.PROTECT)
+    ordered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    ordered_at = models.DateTimeField(default=timezone.now)
+    urgent = models.BooleanField(default=False)
+    clinical_notes = models.CharField(max_length=200, blank=True, help_text="Reason or question for the lab")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ORDERED, db_index=True)
+    sample_taken_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-at"]
-
-
-class AuditLog(models.Model):
-    """Append-only record of who did what to which record, and when."""
-
-    class Action(models.TextChoices):
-        CREATE = "create", "Created"
-        UPDATE = "update", "Updated"
-        DELETE = "delete", "Deleted"
-        VIEW = "view", "Viewed"
-        PRINT = "print", "Printed"
-        BREAK_GLASS = "break_glass", "Emergency override"
-
-    at = models.DateTimeField(auto_now_add=True, db_index=True)
-    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="audit_entries")
-    action = models.CharField(max_length=12, choices=Action.choices, db_index=True)
-    content_type = models.ForeignKey(ContentType, null=True, on_delete=models.SET_NULL)
-    object_id = models.CharField(max_length=64, blank=True)
-    object_repr = models.CharField(max_length=200, blank=True)
-    changes = models.JSONField(default=dict, blank=True)
-    reason = models.TextField(blank=True)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    needs_review = models.BooleanField(default=False, db_index=True)
-    reviewed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
-
-    class Meta:
-        ordering = ["-at", "-id"]
-        indexes = [models.Index(fields=["content_type", "object_id"])]
+        ordering = ["ordered_at", "id"]
 
     def save(self, *args, **kwargs):
-        if self.pk and not kwargs.get("force_insert"):
-            # Only the review fields may change after creation.
-            allowed = {"needs_review", "reviewed_by"}
-            fields = kwargs.get("update_fields")
-            if fields is None or not set(fields) <= allowed:
-                raise PermissionError("Audit entries are append-only.")
+        if self._state.adding and not self.number:
+            with transaction.atomic():  # keeps the number gap-free if the save fails
+                self.number = Sequence.next_number(self.PREFIX[self.test.kind])
+                return super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
+
+    @property
+    def is_open(self):
+        return self.status in (self.Status.ORDERED, self.Status.IN_PROGRESS)
+
+    @property
+    def current_result(self):
+        return self.results.filter(corrected_by__isnull=True).order_by("-id").first()
+
+    def __str__(self):
+        return f"{self.number} {self.test.name}"
+
+
+class Result(AuditedModel):
+    """Results are never edited. A correction is a new row pointing at the one it replaces."""
+
+    class Flag(models.TextChoices):
+        NORMAL = "normal", "Normal"
+        HIGH = "high", "High"
+        LOW = "low", "Low"
+        ABNORMAL = "abnormal", "Abnormal"
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="results")
+    value = models.CharField(max_length=200)
+    unit = models.CharField(max_length=30, blank=True)
+    flag = models.CharField(max_length=10, choices=Flag.choices)
+    comment = models.TextField(blank=True)
+    resulted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    resulted_at = models.DateTimeField(default=timezone.now)
+    corrects = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="corrected_by")
+
+    class Meta:
+        ordering = ["resulted_at", "id"]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise PermissionError("Results cannot be edited. Enter a correction instead.")
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        raise PermissionError("Audit entries cannot be deleted.")
+        raise PermissionError("Results cannot be deleted.")
+
+    @property
+    def earlier(self):
+        out, node = [], self.corrects
+        while node:
+            out.append(node)
+            node = node.corrects
+        return out
 
     def __str__(self):
-        return f"{self.at:%Y-%m-%d %H:%M} {self.user} {self.action} {self.object_repr}"
+        return f"{self.order.test.name}: {self.value} {self.unit}".strip()

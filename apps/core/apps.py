@@ -1,9 +1,6 @@
 from django.apps import AppConfig
 
 
-class CoreConfig(AppConfig):
-    name = "apps.core"
+class OrdersConfig(AppConfig):
+    name = "apps.orders"
     default_auto_field = "django.db.models.BigAutoField"
-
-    def ready(self):
-        from . import audit, signals  # noqa: F401
