@@ -43,6 +43,19 @@ class PrescriptionCancelView(VisitPostView):
         return redirect(self.back)
 
 
+class PrescriptionPrintView(RoleRequiredMixin, View):
+    allowed_roles = ("doctor", "nurse", "pharmacist")
+
+    def get(self, request, pk):
+        from apps.clinical.models import Visit
+        from apps.core.audit import log_event
+
+        visit = get_object_or_404(Visit.objects.select_related("patient", "doctor"), pk=pk)
+        items = visit.prescriptions.exclude(status="cancelled").select_related("drug")
+        log_event("print", visit, reason="Prescription")
+        return render(request, "pharmacy_rx/print.html", {"visit": visit, "patient": visit.patient, "items": items})
+
+
 class PrescriptionListView(RoleRequiredMixin, View):
     """Prescriptions waiting for the pharmacy. Shows only what the pharmacy needs: no notes or results."""
 
