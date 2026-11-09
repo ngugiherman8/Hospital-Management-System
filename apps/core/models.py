@@ -3,9 +3,23 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from apps.core.audit import AuditedModel
-from apps.core.models import Sequence
+#from apps.core.models import Sequence
 
+class Sequence(models.Model):
+    name = models.CharField(max_length=60, unique=True)
+    last_value = models.PositiveBigIntegerField(default=0)
 
+    @classmethod
+    def next_number(cls, name):
+        with transaction.atomic():
+            sequence, created = cls.objects.select_for_update().get_or_create(
+                name=name
+            )
+
+            sequence.last_value += 1
+            sequence.save(update_fields=["last_value"])
+
+            return sequence.last_value
 class TestCatalogue(models.Model):
     """A test or procedure that can be ordered."""
 
