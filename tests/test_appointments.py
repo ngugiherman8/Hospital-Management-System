@@ -90,4 +90,4 @@ def test_queue_page_counts_and_filter(login, reception, patient, clinic):
 
 
 def test_health_endpoint(client, db):
-    assert client.get("/health/").json() == {"status": "ok"}
+    assert client.get("/health/").json() == {"status": "ok", "pending_migrations": []}

@@ -450,3 +450,12 @@ def test_every_clinical_page_renders(
     for c in (d, as_user(nurse), as_user(admin_user)):
         assert c.get(f"/wards/admissions/{adm.pk}/").status_code == 200
     assert as_user(nurse).get("/wards/").status_code == 200
+
+
+def test_choosing_admit_goes_straight_to_the_ward_screen_even_without_a_diagnosis(with_doctor, doctor, beds, as_user):
+    c = as_user(doctor)
+    r = c.post(f"/clinical/consult/{with_doctor.pk}/", {"outcome": "admit", "action": "finish"})
+    visit = visit_of(with_doctor)
+    assert r.status_code == 302 and r.url == f"/wards/admit/visit/{visit.pk}/"
+    page = c.get(r.url)
+    assert page.status_code == 200 and b"Test ward bed T1" in page.content
