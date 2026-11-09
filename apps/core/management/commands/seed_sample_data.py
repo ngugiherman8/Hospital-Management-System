@@ -40,6 +40,9 @@ class Command(BaseCommand):
         if not opts["force"] and os.environ.get("SEED_SAMPLE_DATA", "").lower() not in ("1", "true", "yes"):
             self.stdout.write("SEED_SAMPLE_DATA not set; skipping sample data.")
             return
+        from apps.billing.sampledata import seed_sample_prices
+
+        seed_sample_prices()  # prices first, so the charges created below are priced
         if Patient.objects.exists():
             from apps.clinical.models import Visit
 
