@@ -12,6 +12,7 @@
   <a href="{% url 'appointments:list' %}" {% if request.resolver_match.namespace == 'appointments' %}class="on"{% endif %}>Appointments</a>
   {% if user.role == 'nurse' or user.role == 'doctor' or user.role == 'receptionist' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'wards:board' %}" {% if request.resolver_match.namespace == 'wards' %}class="on"{% endif %}>Wards</a>{% endif %}
   {% if user.role == 'lab' or user.role == 'doctor' or user.role == 'nurse' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'orders:lab' %}" {% if request.resolver_match.namespace == 'orders' %}class="on"{% endif %}>Lab</a>{% endif %}
+  {% if user.role == 'cashier' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'billing:list' %}" {% if request.resolver_match.namespace == 'billing' %}class="on"{% endif %}>Billing</a>{% endif %}
   {% if user.role == 'pharmacist' or user.role == 'doctor' or user.role == 'nurse' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'rx:list' %}" {% if request.resolver_match.namespace == 'rx' %}class="on"{% endif %}>Prescriptions</a>{% endif %}
   {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin and audit log</a>{% endif %}
   <div class="who"><b>{{ user }}</b><br>{{ user.get_role_display }}{% if user.department %}, {{ user.department }}{% endif %}<br>
