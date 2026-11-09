@@ -3,7 +3,7 @@
 <form id="mainform" method="post" action="{% url 'clinical:consult' entry.pk %}">{% csrf_token %}</form>
 <div class="top"><div><p class="sub" style="margin:0">Today's queue / {{ entry.ticket }}</p><h1>Consultation</h1>
 {% if not can_edit %}<p class="sub">{% if visit.is_open %}View only. The doctor writes the consultation.{% else %}This consultation is closed.{% endif %}</p>{% endif %}</div>
-<div class="noprint"><a class="btn" href="{% url 'queue' %}">Back to queue</a>
+<div class="noprint"><a class="btn" href="{% url 'queue' %}">Back to queue</a>{% if prescriptions %} <a class="btn" href="{% url 'rx:print' visit.pk %}">Print prescription</a>{% endif %}{% if visit.outcome == 'refer' and visit.referred_to %} <a class="btn" href="{% url 'clinical:referral' visit.pk %}">Referral letter</a>{% endif %}
 {% if can_edit %} <button class="btn" form="mainform" name="action" value="save">Save draft</button> <button class="btn primary" form="mainform" name="action" value="finish">Finish and send to pharmacy and billing</button>{% endif %}</div></div>
 {% include "clinical/_banner.html" %}
 {% if consult_form.errors %}<div class="msg error">{{ consult_form.errors }}</div>{% endif %}

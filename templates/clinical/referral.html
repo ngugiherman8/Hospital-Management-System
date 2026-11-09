@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Referral letter{% endblock %}
+{% block content %}<div class="top noprint"><h1>Referral letter</h1><div><a class="btn" href="javascript:history.back()">Back</a> <button class="btn primary" onclick="window.print()">Print</button></div></div>
+<section class="card"><h2 style="font-size:20px">{{ HOSPITAL_NAME }}</h2><p>{{ visit.finished_at|default:visit.started_at|date:"j F Y" }}</p>
+<p><b>To:</b> The Doctor in Charge, {{ visit.referred_to }}</p><p><b>Re:</b> {{ patient.full_name }}, {{ patient.get_sex_display }}, {{ patient.age }} years ({{ patient.hospital_number }})</p>
+<p>Dear Colleague, please see and manage this patient.</p>
+{% if visit.complaint %}<p><b>Presenting complaint:</b> {{ visit.complaint }}{% if visit.duration %} ({{ visit.duration }}){% endif %}</p>{% endif %}
+{% if history_note %}<p><b>History:</b> {{ history_note.text|linebreaksbr }}</p>{% endif %}{% if exam_note %}<p><b>Examination:</b> {{ exam_note.text|linebreaksbr }}</p>{% endif %}
+{% if latest %}<p><b>Observations:</b> Temp {{ latest.temperature|default:"-" }}, pulse {{ latest.pulse|default:"-" }}, BP {{ latest.bp|default:"-" }}, SpO₂ {{ latest.spo2|default:"-" }}</p>{% endif %}
+<p><b>Diagnosis:</b> {% for d in diagnoses %}{{ d.icd10.code }} {{ d.icd10.title }} ({{ d.get_kind_display|lower }}){% if not forloop.last %}; {% endif %}{% empty %}Not yet established{% endfor %}</p>
+{% if orders %}<p><b>Tests:</b> {% for o in orders %}{{ o.test.name }}: {% if o.result %}{{ o.result.value }} {{ o.result.unit }} ({{ o.result.get_flag_display|lower }}){% else %}{{ o.get_status_display|lower }}{% endif %}{% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+{% if prescriptions %}<p><b>Treatment given:</b> {% for p in prescriptions %}{{ p.drug.label }}, {{ p.dose }}, {{ p.get_frequency_display|lower }} for {{ p.days }} days{% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+<p><b>Allergies:</b> {{ patient.allergies|default:"None recorded" }}</p>
+<p style="margin-top:30px">Yours sincerely,<br><br>{{ visit.doctor|default:"______________________" }}</p></section>{% endblock %}
