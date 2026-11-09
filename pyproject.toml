@@ -11,6 +11,8 @@ dependencies = [
     "redis>=5.2",
     "gunicorn>=23.0",
     "whitenoise>=6.9",
+    "pyotp>=2.9",
+    "segno>=1.6",
 ]
 
 [tool.uv]

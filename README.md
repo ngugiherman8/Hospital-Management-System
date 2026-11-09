@@ -40,8 +40,11 @@ PostgreSQL service, then builds the Docker image.
 ## What is built
 
 ### Phase 1: foundation
-Users and roles, audit log, login history, patient registry with duplicate detection, appointments, SMS reminder
-task, and today's queue. Details are in the code under `apps/core`, `apps/patients` and `apps/appointments`.
+Users and roles, audit log, login history, patient registry with duplicate detection (search by name, hospital number,
+ID or phone), appointments, SMS reminder task, and today's queue. Security: automatic sign-out after 30 minutes idle,
+lockout after 5 failed sign-ins in 15 minutes, and two-factor sign-in (authenticator app) for administrators. Two-factor is
+on by default in production; set `ADMIN_TWO_FACTOR=false` only while testing. Details are in `apps/core`, `apps/patients`
+and `apps/appointments`.
 
 ### Phase 2: clinical module
 
@@ -75,6 +78,38 @@ routine, then arrival.
 
 Administrators can do everything. Reception, cashier and pharmacist never see notes or result text.
 
+Printouts: prescription, lab result, referral letter and discharge summary (each print is written to the audit log).
+
+### Phase 3: billing and pharmacy (in progress)
+
+| Step | Status | What it does |
+| --- | --- | --- |
+| 1. Price lists and charges | Built | `ServiceItem` and a price per payer type (cash, SHA, private, corporate; cash price is the fallback). Draft charges appear on their own from clinical events: registration (first visit), consultation finished, each test ordered, each bed day, each dispensed medicine. Each event is charged once, ever |
+| 2. Invoices | Built | Gap-free `INV-2026-000123` numbers, total worked out from the lines, draft, open, part-paid, paid, void. Cashier adds or removes lines on a draft, finalises, prints. Administrator issues credit notes and voids |
+| 3. Payments and receipts | Built | Cash, M-Pesa (typed code), card, insurer; part payments; inpatient deposits; receipts `RCT-...`; refunds are negative payments approved by an administrator (`RFD-...`). M-Pesa prompt and callback are built: each provider transaction becomes one payment however often it is sent |
+| 4. Insurer and SHA claims | Not built | |
+| 5. Pharmacy and stock | Not built | Dispensing, batches, expiry and reorder alerts. The billing side is ready: a prescription marked dispensed is charged automatically |
+| 6. End of day | Not built | Cash-up and stock-take |
+
+Prices must be set by an administrator in `/admin/` under Service items (each has a price per payer type). Run
+`python manage.py sync_service_items` after adding tests or drugs so they can be priced. A charge with no price shows
+"No price set" and blocks finalising the invoice. `seed_sample_data` (testing only) loads sample prices.
+
+M-Pesa: the cashier can type the transaction code now. For automatic prompts set `MPESA_CONSUMER_KEY`,
+`MPESA_CONSUMER_SECRET`, `MPESA_SHORTCODE`, `MPESA_PASSKEY`, `MPESA_CALLBACK_TOKEN` and `MPESA_CALLBACK_BASE`
+(see `.env.example`). The callback address is `/billing/mpesa/callback/<token>/`. The prompt code has been tested only against a
+stand-in for Safaricom, not the real service.
+
+### Status against the build instructions
+
+| Phase | Status |
+| --- | --- |
+| 1 Foundation | Complete, apart from items the instructions leave to later: SMS provider, FHIR-style API |
+| 2A Core clinical | Complete: triage, consultation, orders and results, prescriptions, wards, printouts. Still open: the full ICD-10 list (needs the hospital's licensed file; load with `import_icd10`), and catalogue maintenance is through the admin site rather than dedicated screens |
+| 2B Imaging, antenatal and postnatal, dental | **Not built.** Needs the radiographer, radiologist, midwife and dentist roles |
+| 3 Billing and pharmacy | Steps 1 to 3 built; steps 4 to 6 not built |
+| 4, 5 | Not started |
+
 ### How this differs from the Phase 2 instructions
 
 The instructions assume a Phase 1 with some helpers; here is how each maps to what exists.
@@ -94,8 +129,8 @@ Load a full ICD-10 list with `python manage.py import_icd10 file.csv` (columns `
 
 ## Not built yet
 
-- Two-factor login for admins: the flag exists on the user, but no second step is enforced.
 - Real SMS provider: `SMS_BACKEND` defaults to a console logger.
-- SHA / insurer cover verification, billing, dispensing and stock (Phase 3).
+- SHA / insurer cover verification, claims, dispensing and stock, end-of-day cash-up (rest of Phase 3).
+- Imaging, antenatal and postnatal care, dental (Phase 2B).
 - Radiology image storage, HR and payroll: still open scope items in the plan.
 - Cloud replication (Phase 4).
