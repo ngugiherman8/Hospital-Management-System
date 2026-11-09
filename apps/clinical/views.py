@@ -302,6 +302,38 @@ class SendToLabView(VisitPostView):
         return redirect(self.back)
 
 
+class ReferralLetterView(RoleRequiredMixin, View):
+    """Printed referral letter for a visit whose outcome is 'refer'."""
+
+    allowed_roles = ("doctor", "nurse")
+
+    def get(self, request, pk):
+        visit = get_object_or_404(Visit.objects.select_related("patient", "doctor"), pk=pk)
+        if visit.outcome != Outcome.REFER or not visit.referred_to.strip():
+            messages.error(request, "Choose 'Refer to another facility' and name the facility first.")
+            return redirect(
+                visit.queue_entry_id and reverse("clinical:consult", args=[visit.queue_entry_id]) or "queue"
+            )
+        log_event("print", visit, reason="Referral letter")
+        orders = list(visit.orders.exclude(status="cancelled").select_related("test"))
+        for o in orders:
+            o.result = o.current_result
+        return render(
+            request,
+            "clinical/referral.html",
+            {
+                "visit": visit,
+                "patient": visit.patient,
+                "diagnoses": visit.diagnoses.select_related("icd10"),
+                "orders": orders,
+                "prescriptions": visit.prescriptions.exclude(status="cancelled").select_related("drug"),
+                "history_note": visit.current_note("history"),
+                "exam_note": visit.current_note("examination"),
+                "latest": visit.latest_vitals,
+            },
+        )
+
+
 class PatientHistoryView(RoleRequiredMixin, View):
     """The patient timeline. Care staff open it directly; others need a logged break-glass override."""
 

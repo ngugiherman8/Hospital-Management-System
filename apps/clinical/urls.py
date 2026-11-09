@@ -19,6 +19,7 @@ urlpatterns = [
     path("visits/<int:pk>/notes/<int:note_pk>/amend/", v.NoteAmendView.as_view(), name="note_amend"),
     path("visits/<int:pk>/vitals/add/", v.VitalsAddView.as_view(), name="vitals_add"),
     path("visits/<int:pk>/send-to-lab/", v.SendToLabView.as_view(), name="send_to_lab"),
+    path("visits/<int:pk>/referral/", v.ReferralLetterView.as_view(), name="referral"),
     path("patients/<int:pk>/history/", v.PatientHistoryView.as_view(), name="history"),
     path("patients/<int:pk>/break-glass/", v.BreakGlassView.as_view(), name="break_glass"),
 ]
