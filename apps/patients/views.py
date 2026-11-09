@@ -54,6 +54,7 @@ class PatientListView(RoleRequiredMixin, ListView):
                 | Q(last_name__icontains=q)
                 | Q(hospital_number__icontains=q)
                 | Q(phone__icontains=q)
+                | Q(id_number__icontains=q)
             )
             cond |= phone_search_q(q)
             qs = qs.filter(cond)
