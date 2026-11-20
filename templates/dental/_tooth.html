@@ -1,0 +1,2 @@
+{% load hms %}
+{% with entries=chart|get_item:t %}<div class="bed {% if entries %}occupied{% endif %}" style="min-width:56px;padding:6px;text-align:center"><b>{{ t }}</b>{% for surface, label, code in entries %}<div class="sub" style="font-size:11px;line-height:1.2">{{ label }}{% if surface != 'Whole tooth' %} ({{ surface|slice:":1" }}){% endif %}</div>{% endfor %}</div>{% endwith %}

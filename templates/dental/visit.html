@@ -1,1 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Dental: {{ patient.full_name }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Queue / {{ visit.queue_label|default:"Visit" }}</div><h1>{{ patient.full_name }}</h1>
+<div class="sub">{{ patient.get_sex_display }}, {{ patient.age }} years. {{ patient.hospital_number }} <span class="badge {{ visit.status }}">{{ visit.get_status_display }}</span></div></div>
+<a class="btn" href="{% url 'visit_detail' visit.pk %}">Notes, diagnosis, tests, prescription</a></div>
+{% if pregnant %}<div class="alert warning"><b>Pregnancy notice:</b> this patient has an open antenatal episode. Check before X-rays, anaesthetic or medicines.</div>{% endif %}
+{% if patient.allergies %}<div class="alert warning"><b>Allergies:</b> {{ patient.allergies }}</div>{% endif %}
+<div class="stack">
+<section class="card"><h2>Tooth chart</h2>
+<p class="sub">Latest entry for each tooth. Coloured teeth are not healthy; earlier entries stay in the history below.</p>
+<div class="beds" style="gap:6px">{% for t in upper %}{% include "dental/_tooth.html" %}{% endfor %}</div><div style="height:8px"></div>
+<div class="beds" style="gap:6px">{% for t in lower %}{% include "dental/_tooth.html" %}{% endfor %}</div>
+<details style="margin-top:12px"><summary>Baby teeth</summary>
+<div class="beds" style="gap:6px;margin-top:8px">{% for t in baby_upper %}{% include "dental/_tooth.html" %}{% endfor %}</div><div style="height:8px"></div>
+<div class="beds" style="gap:6px">{% for t in baby_lower %}{% include "dental/_tooth.html" %}{% endfor %}</div></details>
+{% if can_edit %}<form method="post" action="{% url 'tooth_add' visit.pk %}" class="row" style="align-items:flex-end;margin-top:12px">{% csrf_token %}
+{% include "_field.html" with field=tooth_form.tooth %}{% include "_field.html" with field=tooth_form.surface %}{% include "_field.html" with field=tooth_form.condition %}<button class="btn" type="submit">Add to chart</button></form>{% endif %}
+<details style="margin-top:12px"><summary>Chart history</summary><table><thead><tr><th>When</th><th>Tooth</th><th>Surface</th><th>Condition</th><th>By</th></tr></thead><tbody>
+{% for r in history %}<tr><td>{{ r.created_at|date:"j M Y H:i" }}</td><td>{{ r.tooth }}</td><td>{{ r.get_surface_display }}</td><td>{{ r.get_condition_display }}</td><td>{{ r.recorded_by }}</td></tr>{% empty %}<tr><td colspan="5" class="sub">Nothing charted yet.</td></tr>{% endfor %}</tbody></table></details></section>
 
+<section class="card"><h2>Visit record</h2>
+{% if can_edit and visit_form %}<form method="post" action="{% url 'dental_visit_save' visit.pk %}" class="stack">{% csrf_token %}
+{% include "_field.html" with field=visit_form.complaint %}{% include "_field.html" with field=visit_form.dental_history %}
+<div class="grid2">{% include "_field.html" with field=visit_form.allergies_note %}{% include "_field.html" with field=visit_form.current_medicines %}</div>
+<label><input type="checkbox" name="has_diabetes" {% if dental.has_diabetes %}checked{% endif %}> Diabetes</label>
+<label><input type="checkbox" name="bleeding_problems" {% if dental.bleeding_problems %}checked{% endif %}> Bleeding problems</label>
+{% include "_field.html" with field=visit_form.examination %}<button class="btn primary" type="submit">Save visit record</button></form>
+{% elif dental %}<div class="kv"><div><span>Complaint</span><b>{{ dental.complaint|default:"-" }}</b></div><div><span>Diabetes</span><b>{{ dental.has_diabetes|yesno:"Yes,No" }}</b></div><div><span>Bleeding problems</span><b>{{ dental.bleeding_problems|yesno:"Yes,No" }}</b></div></div><p>{{ dental.examination|linebreaksbr }}</p>
+{% else %}<p class="sub">No dental record for this visit yet.</p>{% endif %}</section>
+
+<section class="card"><h2>Treatment plan</h2>
+{% if plan %}<table><thead><tr><th>Tooth</th><th>Procedure</th><th>Estimate</th><th>Status</th><th></th></tr></thead><tbody>
+{% for i in plan.items.all %}<tr><td>{{ i.tooth|default:"Whole mouth" }}</td><td>{{ i.procedure }}{% if i.anaesthetic_note %}<div class="sub" style="font-size:13px">Anaesthetic: {{ i.anaesthetic_note }}</div>{% endif %}</td><td>{{ i.estimate }}</td><td><span class="badge {{ i.status }}">{{ i.get_status_display }}</span>{% if i.ready_for_billing %} <span class="badge routine">Ready for billing</span>{% endif %}</td>
+<td style="text-align:right">{% if can_edit and i.status == 'planned' or can_edit and i.status == 'in_progress' %}<form method="post" action="{% url 'plan_item_action' visit.pk i.pk %}" class="row" style="gap:6px;justify-content:flex-end">{% csrf_token %}<input name="anaesthetic_note" placeholder="Anaesthetic given" aria-label="Anaesthetic given" style="height:36px;border:1px solid var(--field);border-radius:8px;padding:0 8px">
+{% if i.status == 'planned' %}<button class="btn small" name="action" value="start">Start</button>{% endif %}<button class="btn small" name="action" value="complete">Complete</button><button class="btn small" name="action" value="decline">Declined</button></form>{% endif %}</td></tr>
+{% endfor %}</tbody></table>
+<p><b>Total estimate:</b> {{ plan.total_estimate }}. {% if plan.has_consent %}<span class="badge routine">Agreed by {{ plan.consent_by }}, {{ plan.consent_at|date:"j M Y H:i" }}</span>{% else %}<span class="badge urgent">Consent not yet recorded</span>{% endif %}</p>
+{% if can_edit and not plan.has_consent and plan.status == 'open' %}<form method="post" action="{% url 'plan_consent' visit.pk plan.pk %}" class="row" style="align-items:flex-end">{% csrf_token %}{% include "_field.html" with field=consent_form.agreed_by %}<button class="btn" type="submit">Record consent</button></form>{% endif %}
+{% else %}<p class="sub">No treatment plan yet.</p>{% endif %}
+{% if can_edit %}<form method="post" action="{% url 'plan_item_add' visit.pk %}" class="row" style="align-items:flex-end;margin-top:12px">{% csrf_token %}{% include "_field.html" with field=item_form.tooth %}{% include "_field.html" with field=item_form.procedure %}{% include "_field.html" with field=item_form.estimate %}<button class="btn" type="submit">Add to plan</button></form>{% endif %}
+{% if ready_total %}<p><b>Ready for billing:</b> {{ ready_total }}</p>{% endif %}</section>
+</div>
+{% endblock %}
