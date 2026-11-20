@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Sync status{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Administration</div><h1>Sync status</h1><p class="sub">This server runs as <b>{{ mode }}</b>.{% if not configured %} Sync to the cloud is not switched on.{% endif %}</p></div></div>
+<section class="card"><div class="totals"><span>Changes waiting to reach the cloud</span><b>{{ q.unsent }}</b><span>Oldest waiting</span><b>{{ q.oldest_age_seconds }} s</b><span>Last sent</span><b>{{ q.last_sent_at|date:"j M H:i:s"|default:"never" }}</b></div>
+{% if q.last_error %}<div class="alert error">Last error: {{ q.last_error }}</div>{% endif %}
+{% for r in stuck %}<p class="sub">#{{ r.id }} {{ r.model_label }} {{ r.object_id }}: {{ r.attempts }} attempt(s), next try {{ r.next_attempt_at|date:"H:i:s" }}</p>{% endfor %}</section>
+{% endblock %}

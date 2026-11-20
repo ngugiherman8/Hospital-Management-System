@@ -1,1 +1,9 @@
-
+{% extends "base.html" %}
+{% block title %}Today's report{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Reports</div><h1>Today, {{ today|date:"j M Y" }}</h1>{% if mode == 'cloud' %}<p class="sub">Read-only copy. It shows what the hospital server has sent so far.</p>{% endif %}</div></div>
+<div class="stats"><div class="stat"><span>Visits today</span><b>{{ total }}</b></div><div class="stat"><span>Invoices finalised</span><b>{{ money.invoices }}</b></div><div class="stat"><span>Billed (KES)</span><b>{{ money.billed }}</b></div><div class="stat"><span>Received, net (KES)</span><b>{{ money.net }}</b></div></div>
+<section class="card"><h2>Visits by status</h2><table><tbody>{% for label, n in by_status %}<tr><td>{{ label }}</td><td class="num">{{ n }}</td></tr>{% empty %}<tr><td>No visits yet.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Payments by method (KES)</h2><table><tbody>{% for m, a in money.by_method.items %}<tr><td>{{ m }}</td><td class="num">{{ a }}</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Drugs low or out of stock</h2><p>{% for r in low %}{{ r.drug }} ({{ r.on_hand }}){% if not forloop.last %}, {% endif %}{% empty %}None.{% endfor %}</p></section>
+{% endblock %}
