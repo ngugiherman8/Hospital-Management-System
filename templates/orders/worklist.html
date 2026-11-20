@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Lab work list{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Laboratory</div><h1>Lab work list</h1></div></div>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:720px">
+<thead><tr><th style="padding-left:20px">Order</th><th>Patient</th><th>Test</th><th>Sample</th><th>Status</th><th></th></tr></thead><tbody>
+{% for i in items %}<tr><td style="padding-left:20px"><b>{{ i.order.number }}</b><div class="sub" style="font-size:13px">{{ i.order.created_at|date:"j M H:i" }}</div></td>
+<td>{{ i.order.appointment.patient.full_name }}<div class="sub" style="font-size:13px">{{ i.order.appointment.patient.hospital_number }}</div></td>
+<td>{{ i.test.name }}{% if i.order.note %}<div class="sub" style="font-size:13px">{{ i.order.note }}</div>{% endif %}</td><td>{{ i.test.sample_type|default:"-" }}</td>
+<td><span class="badge {{ i.status }}">{{ i.get_status_display }}</span></td>
+<td style="text-align:right">{% if can_work %}<div class="row" style="justify-content:flex-end">
+{% if i.status == 'ordered' %}<form method="post" action="{% url 'sample_taken' i.pk %}">{% csrf_token %}<button class="btn small" type="submit">Sample taken</button></form>{% endif %}
+<a class="btn small" href="{% url 'result_entry' i.pk %}">Enter result</a></div>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="6" style="padding:24px 20px">No tests waiting.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

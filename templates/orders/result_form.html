@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Result: {{ item.test.name }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Lab work list / {{ item.order.number }}</div><h1>{{ item.test.name }}</h1>
+<div class="sub">{{ visit.patient.full_name }}, {{ visit.patient.get_sex_display }}, {{ visit.patient.age }} years. {{ visit.patient.hospital_number }}</div></div></div>
+{% if item.test.normal_range %}<div class="sub">Normal: {{ item.test.normal_range }}</div>{% endif %}
+{% if previous %}<div class="alert warning">A result is already saved: <b>{{ previous.value }}</b> {{ previous.unit }}. Saving again records a correction and keeps the earlier result.</div>{% endif %}
+<form method="post" class="card" style="max-width:560px">{% csrf_token %}
+{% include "_field.html" with field=form.value %}{% include "_field.html" with field=form.unit %}{% include "_field.html" with field=form.flag %}{% include "_field.html" with field=form.comment %}
+<div class="row"><a class="btn" href="{% url 'lab_worklist' %}">Cancel</a><button class="btn primary" type="submit">Save result</button></div></form>
+{% endblock %}
