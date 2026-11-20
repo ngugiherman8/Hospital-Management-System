@@ -1,26 +1,29 @@
+from decimal import Decimal, InvalidOperation
+
 from django.conf import settings
-from django.db import models, transaction
+from django.db import models
 from django.utils import timezone
 
-from apps.core.audit import AuditedModel
-from apps.core.models import Sequence
+from apps.appointments.models import Appointment
+from apps.core.models import AuditedModel, Sequence
 
 
-class TestCatalogue(models.Model):
-    """A test or procedure that can be ordered."""
-
-    __test__ = False  # not a pytest test class
+class TestCatalogue(AuditedModel):
+    __test__ = False  # not a pytest class
 
     class Kind(models.TextChoices):
         LAB = "lab", "Laboratory"
-        RADIOLOGY = "radiology", "Radiology"
-        PROCEDURE = "procedure", "Procedure"
+        IMAGING = "imaging", "Imaging"
 
-    name = models.CharField(max_length=120, unique=True)
-    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.LAB)
-    price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Placeholder until Billing")
-    normal_range = models.CharField(max_length=120, blank=True)
+    code = models.CharField(max_length=20, unique=True)
+    name = models.CharField(max_length=150)
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.LAB)
     sample_type = models.CharField(max_length=60, blank=True)
+    unit = models.CharField(max_length=30, blank=True)
+    ref_low = models.DecimalField("Normal low", max_digits=9, decimal_places=2, null=True, blank=True)
+    ref_high = models.DecimalField("Normal high", max_digits=9, decimal_places=2, null=True, blank=True)
+    normal_range = models.CharField(max_length=100, blank=True, help_text="Shown to staff, e.g. Negative")
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -31,82 +34,134 @@ class TestCatalogue(models.Model):
 
 
 class Order(AuditedModel):
-    class Status(models.TextChoices):
-        ORDERED = "ordered", "Ordered"
-        IN_PROGRESS = "in_progress", "In progress"
-        RESULTED = "resulted", "Result in"
-        CANCELLED = "cancelled", "Cancelled"
+    """A set of tests of one kind ordered together for a visit."""
 
-    PREFIX = {"lab": "LAB", "radiology": "RAD", "procedure": "PRC"}
-
-    number = models.CharField(max_length=24, unique=True, editable=False)
-    visit = models.ForeignKey("clinical.Visit", on_delete=models.CASCADE, related_name="orders")
-    test = models.ForeignKey(TestCatalogue, on_delete=models.PROTECT)
+    appointment = models.ForeignKey(Appointment, on_delete=models.PROTECT, related_name="orders")
+    kind = models.CharField(max_length=10, choices=TestCatalogue.Kind.choices, default=TestCatalogue.Kind.LAB)
+    number = models.CharField(max_length=30, unique=True, editable=False)
     ordered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    ordered_at = models.DateTimeField(default=timezone.now)
-    urgent = models.BooleanField(default=False)
-    clinical_notes = models.CharField(max_length=200, blank=True, help_text="Reason or question for the lab")
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ORDERED, db_index=True)
-    sample_taken_at = models.DateTimeField(null=True, blank=True)
+    note = models.CharField("Clinical note for the lab", max_length=300, blank=True)
 
     class Meta:
-        ordering = ["ordered_at", "id"]
+        ordering = ["-id"]
+
+    def __str__(self):
+        return self.number
 
     def save(self, *args, **kwargs):
-        if self._state.adding and not self.number:
-            with transaction.atomic():  # keeps the number gap-free if the save fails
-                self.number = Sequence.next_number(self.PREFIX[self.test.kind])
-                return super().save(*args, **kwargs)
-        return super().save(*args, **kwargs)
+        if not self.number:
+            year = timezone.localdate().year
+            prefix = "LAB" if self.kind == TestCatalogue.Kind.LAB else "IMG"
+            self.number = f"{prefix}-{year}-{Sequence.next(f'order-{prefix}-{year}'):06d}"
+        super().save(*args, **kwargs)
 
     @property
-    def is_open(self):
-        return self.status in (self.Status.ORDERED, self.Status.IN_PROGRESS)
+    def status(self):
+        statuses = {i.status for i in self.items.all()}
+        if not statuses or statuses == {OrderItem.Status.CANCELLED}:
+            return OrderItem.Status.CANCELLED
+        live = statuses - {OrderItem.Status.CANCELLED}
+        if live == {OrderItem.Status.RESULT_IN}:
+            return OrderItem.Status.RESULT_IN
+        for s in (OrderItem.Status.IN_PROGRESS, OrderItem.Status.SAMPLE_TAKEN):
+            if s in live:
+                return s
+        return OrderItem.Status.ORDERED
+
+
+class OrderItem(AuditedModel):
+    class Status(models.TextChoices):
+        ORDERED = "ordered", "Ordered"
+        SAMPLE_TAKEN = "sample_taken", "Sample taken"
+        IN_PROGRESS = "in_progress", "In progress"
+        RESULT_IN = "result_in", "Result in"
+        CANCELLED = "cancelled", "Cancelled"
+
+    PENDING = (Status.ORDERED, Status.SAMPLE_TAKEN, Status.IN_PROGRESS)
+
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="items")
+    test = models.ForeignKey(TestCatalogue, on_delete=models.PROTECT, related_name="+")
+    status = models.CharField(max_length=15, choices=Status.choices, default=Status.ORDERED, db_index=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.order.number}: {self.test.name}"
 
     @property
     def current_result(self):
-        return self.results.filter(corrected_by__isnull=True).order_by("-id").first()
-
-    def __str__(self):
-        return f"{self.number} {self.test.name}"
+        return self.results.filter(replaced_by__isnull=True).first()
 
 
 class Result(AuditedModel):
-    """Results are never edited. A correction is a new row pointing at the one it replaces."""
+    """A test result. Never edited: a correction is a new result that replaces the old one."""
 
     class Flag(models.TextChoices):
         NORMAL = "normal", "Normal"
         HIGH = "high", "High"
         LOW = "low", "Low"
-        ABNORMAL = "abnormal", "Abnormal"
 
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="results")
+    item = models.ForeignKey(OrderItem, on_delete=models.PROTECT, related_name="results")
     value = models.CharField(max_length=200)
     unit = models.CharField(max_length=30, blank=True)
-    flag = models.CharField(max_length=10, choices=Flag.choices)
-    comment = models.TextField(blank=True)
-    resulted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    resulted_at = models.DateTimeField(default=timezone.now)
-    corrects = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="corrected_by")
+    flag = models.CharField(max_length=10, choices=Flag.choices, default=Flag.NORMAL)
+    comment = models.CharField(max_length=300, blank=True)
+    entered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    entered_at = models.DateTimeField(default=timezone.now, editable=False)
+    replaces = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="replaced_by", editable=False
+    )
 
     class Meta:
-        ordering = ["resulted_at", "id"]
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.item.test.name}: {self.value}"
 
     def save(self, *args, **kwargs):
-        if not self._state.adding:
-            raise PermissionError("Results cannot be edited. Enter a correction instead.")
+        if self.pk:
+            raise PermissionError("Saved results cannot be changed; enter a correction.")
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        raise PermissionError("Results cannot be deleted.")
+        raise PermissionError("Saved results cannot be deleted.")
 
-    @property
-    def earlier(self):
-        out, node = [], self.corrects
-        while node:
-            out.append(node)
-            node = node.corrects
-        return out
+    @staticmethod
+    def auto_flag(test, value):
+        """Flag a numeric value against the test's normal range, or None when it cannot be judged."""
+        try:
+            number = Decimal(str(value).strip())
+        except (InvalidOperation, ValueError):
+            return None
+        if test.ref_low is not None and number < test.ref_low:
+            return Result.Flag.LOW
+        if test.ref_high is not None and number > test.ref_high:
+            return Result.Flag.HIGH
+        if test.ref_low is not None or test.ref_high is not None:
+            return Result.Flag.NORMAL
+        return None
 
-    def __str__(self):
-        return f"{self.order.test.name}: {self.value} {self.unit}".strip()
+
+def record_result(item, value, user, unit="", flag="", comment=""):
+    """Save a result for an item (or a correction when it already has one) and mark the item done."""
+    from django.db import transaction
+
+    with transaction.atomic():
+        item = OrderItem.objects.select_for_update().get(pk=item.pk)
+        if item.status == OrderItem.Status.CANCELLED:
+            raise ValueError("This test was cancelled.")
+        previous = item.current_result
+        flag = flag or Result.auto_flag(item.test, value) or Result.Flag.NORMAL
+        result = Result.objects.create(
+            item=item,
+            value=value,
+            unit=unit or item.test.unit,
+            flag=flag,
+            comment=comment,
+            entered_by=user,
+            replaces=previous,
+        )
+        item.status = OrderItem.Status.RESULT_IN
+        item.save()
+        return result

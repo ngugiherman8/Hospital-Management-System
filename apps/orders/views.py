@@ -2,168 +2,99 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
-from django.utils import timezone
-from django.views import View
+from django.views.decorators.http import require_POST
 
-from apps.appointments.models import Stage, TransitionError
-from apps.clinical.workspace import CARE, LAB, VisitPostView
-from apps.core.permissions import RoleRequiredMixin
+from apps.accounts.models import CLINICIAN_ROLES, Role
+from apps.appointments.models import Appointment, Status
+from apps.clinical.views import EDITABLE, _clinic_ok
+from apps.core.audit import log_access
+from apps.core.permissions import role_required
 
-from .forms import CorrectionForm, OrderForm, ResultForm
-from .models import Order, Result
-
-
-def _return_from_lab(request, order):
-    """When the last open test is resulted or cancelled, the patient goes back to the doctor."""
-    entry = order.visit.queue_entry
-    if entry and entry.stage == Stage.AT_LAB:
-        try:
-            entry.apply("lab_complete", request.user)
-        except TransitionError:
-            pass  # other tests are still open
+from .forms import OrderForm, ResultForm
+from .models import Order, OrderItem, record_result
 
 
-def can_result(user, order):
-    """Lab and radiology are resulted by lab staff; procedures by the clinician who did them."""
-    return user.has_role(*CARE) if order.test.kind == "procedure" else user.has_role(*LAB)
-
-
-class OrderAddView(VisitPostView):
-    def act(self, request):
-        form = OrderForm(request.POST)
-        if not form.is_valid():
-            return self.invalid(request, order_form=form)
-        d = form.cleaned_data
-        order = Order.objects.create(
-            visit=self.visit,
-            test=d["test"],
-            ordered_by=request.user,
-            urgent=d["urgent"],
-            clinical_notes=d["clinical_notes"],
-        )
-        messages.success(request, f"{order.test.name} ordered ({order.number}).")
-        return redirect(self.back)
-
-
-class OrderCancelView(VisitPostView):
-    def act(self, request, order_pk):
-        order = get_object_or_404(Order, pk=order_pk, visit=self.visit)
-        if order.status == Order.Status.ORDERED:
-            order.status = Order.Status.CANCELLED
-            order.save()
-            _return_from_lab(request, order)
-        else:
-            messages.error(request, "Only tests the lab has not started can be cancelled.")
-        return redirect(self.back)
-
-
-class LabWorklistView(RoleRequiredMixin, View):
-    """Lab technicians work it; doctors and nurses can look."""
-
-    allowed_roles = ("lab", "doctor", "nurse")
-
-    def get(self, request):
-        open_orders = (
-            Order.objects.filter(status__in=["ordered", "in_progress"])
-            .select_related("test", "visit__patient", "ordered_by")
-            .order_by("-urgent", "ordered_at")
-        )
-        since = timezone.now() - timezone.timedelta(hours=24)
-        done = list(
-            Order.objects.filter(status="resulted", results__resulted_at__gte=since)
-            .distinct()
-            .select_related("test", "visit__patient")
-            .order_by("-id")[:20]
-        )
-        for o in done:
-            o.result = o.current_result
-        return render(
-            request,
-            "orders/lab.html",
-            {
-                "open_orders": open_orders,
-                "done": done,
-                "result_form": ResultForm(),
-                "correction_form": CorrectionForm(),
-                "is_lab": request.user.has_role(*LAB),
-                "is_care": request.user.has_role(*CARE),
-            },
-        )
-
-
-class LabCollectView(RoleRequiredMixin, View):
-    allowed_roles = LAB
-    http_method_names = ["post"]
-
-    def post(self, request, order_pk):
-        order = get_object_or_404(Order, pk=order_pk)
-        if order.status == Order.Status.ORDERED:
-            order.status = Order.Status.IN_PROGRESS
-            order.sample_taken_at = timezone.now()
-            order.save()
-        return redirect("orders:lab")
-
-
-class LabResultView(RoleRequiredMixin, View):
-    allowed_roles = ("lab", "doctor", "nurse")
-    http_method_names = ["post"]
-
-    def post(self, request, order_pk):
-        order = get_object_or_404(Order.objects.select_related("test", "visit"), pk=order_pk)
-        if not can_result(request.user, order):
-            raise PermissionDenied
-        if not order.is_open:
-            messages.error(request, "That order is not waiting for a result.")
-            return redirect("orders:lab")
-        form = ResultForm(request.POST)
-        if not form.is_valid():
-            messages.error(request, "Enter the result and mark it normal, high, low or abnormal.")
-            return redirect("orders:lab")
-        d = form.cleaned_data
+@role_required(*CLINICIAN_ROLES)
+@require_POST
+def order_create(request, pk):
+    visit = get_object_or_404(Appointment, pk=pk)
+    if visit.status not in EDITABLE or not _clinic_ok(request.user, visit):
+        raise PermissionDenied
+    form = OrderForm(request.POST)
+    if form.is_valid():
         with transaction.atomic():
-            Result.objects.create(
-                order=order,
-                value=d["value"],
-                unit=d["unit"],
-                flag=d["flag"],
-                comment=d["comment"],
-                resulted_by=request.user,
-            )
-            order.status = Order.Status.RESULTED
-            order.sample_taken_at = order.sample_taken_at or timezone.now()
-            order.save()
-            _return_from_lab(request, order)
-        messages.success(request, f"Result saved for {order.test.name}.")
-        return redirect("orders:lab")
+            order = Order.objects.create(appointment=visit, ordered_by=request.user, note=form.cleaned_data["note"])
+            for test in form.cleaned_data["tests"]:
+                OrderItem.objects.create(order=order, test=test)
+        messages.success(request, f"Ordered {order.items.count()} test(s): {order.number}.")
+    else:
+        messages.error(request, "Choose at least one test.")
+    return redirect("visit_detail", pk=visit.pk)
 
 
-class LabCorrectView(RoleRequiredMixin, View):
-    """A correction adds a new result that replaces the old one on screen. The old one stays on record."""
+@role_required(*CLINICIAN_ROLES)
+@require_POST
+def item_cancel(request, pk):
+    item = get_object_or_404(OrderItem.objects.select_related("order__appointment"), pk=pk)
+    visit = item.order.appointment
+    if visit.status not in EDITABLE or not _clinic_ok(request.user, visit):
+        raise PermissionDenied
+    if item.status == OrderItem.Status.RESULT_IN:
+        messages.error(request, "A test with a result cannot be cancelled.")
+    else:
+        item.status = OrderItem.Status.CANCELLED
+        item.save()
+        study = getattr(item, "study", None)
+        if study is not None:
+            study.cancel()
+        messages.success(request, f"{item.test.name} cancelled.")
+    return redirect("visit_detail", pk=visit.pk)
 
-    allowed_roles = ("lab", "doctor", "nurse")
-    http_method_names = ["post"]
 
-    def post(self, request, order_pk):
-        order = get_object_or_404(Order.objects.select_related("test"), pk=order_pk)
-        if not can_result(request.user, order):
-            raise PermissionDenied
-        current = order.current_result
-        if order.status != Order.Status.RESULTED or current is None:
-            messages.error(request, "Only a test that already has a result can be corrected.")
-            return redirect("orders:lab")
-        form = CorrectionForm(request.POST)
-        if not form.is_valid():
-            messages.error(request, "A correction needs the new result and the reason for the change.")
-            return redirect("orders:lab")
-        d = form.cleaned_data
-        Result.objects.create(
-            order=order,
-            value=d["value"],
-            unit=d["unit"],
-            flag=d["flag"],
-            comment=d["comment"],
-            resulted_by=request.user,
-            corrects=current,
-        )
-        messages.success(request, "Correction saved. The earlier result is kept in the record.")
-        return redirect("orders:lab")
+@role_required(Role.LAB, Role.DOCTOR, Role.NURSE)
+def worklist(request):
+    """Tests waiting for a sample or a result, oldest first."""
+    items = (
+        OrderItem.objects.filter(status__in=OrderItem.PENDING, order__kind="lab")
+        .select_related("order__appointment__patient", "test")
+        .order_by("order__created_at", "id")
+    )
+    return render(request, "orders/worklist.html", {"items": items, "can_work": request.user.has_role(Role.LAB)})
+
+
+@role_required(Role.LAB)
+@require_POST
+def sample_taken(request, pk):
+    item = get_object_or_404(OrderItem, pk=pk)
+    if item.status == OrderItem.Status.ORDERED:
+        item.status = OrderItem.Status.SAMPLE_TAKEN
+        item.save()
+    return redirect("lab_worklist")
+
+
+@role_required(Role.LAB)
+def result_entry(request, pk):
+    item = get_object_or_404(OrderItem.objects.select_related("order__appointment__patient", "test"), pk=pk)
+    visit = item.order.appointment
+    if item.status == OrderItem.Status.CANCELLED:
+        raise PermissionDenied
+    previous = item.current_result
+    initial = {"unit": item.test.unit}
+    form = ResultForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        data = form.cleaned_data
+        record_result(item, data["value"], request.user, unit=data["unit"], flag=data["flag"], comment=data["comment"])
+        messages.success(request, f"Result saved for {item.test.name}.")
+        visit.refresh_from_db()
+        if visit.status == Status.AWAITING_RESULTS and Status.WITH_DOCTOR in visit.allowed_next(request.user):
+            try:
+                visit.move_to(Status.WITH_DOCTOR, request.user)
+                messages.success(request, f"All results are in: {visit.patient.full_name} is back with the doctor.")
+            except Exception:  # noqa: BLE001 - other tests are still open; the visit stays where it is
+                pass
+        return redirect("lab_worklist")
+    if previous:
+        log_access(previous)
+    return render(
+        request, "orders/result_form.html", {"item": item, "visit": visit, "form": form, "previous": previous}
+    )
