@@ -1,10 +1,12 @@
 from django.contrib import admin
 
-from .models import Invoice, InvoiceLine, MpesaRequest, Payer, Payment, Price, ServiceItem
+from apps.core.appendonly import ReadOnlyAdmin
+
+from .models import CashUp, Claim, ClaimLine, Invoice, InvoiceLine, ItemPrice, Payment, ServiceItem
 
 
 class PriceInline(admin.TabularInline):
-    model = Price
+    model = ItemPrice
     extra = 0
 
 
@@ -16,43 +18,36 @@ class ServiceItemAdmin(admin.ModelAdmin):
     inlines = [PriceInline]
 
 
-@admin.register(Payer)
-class PayerAdmin(admin.ModelAdmin):
-    list_display = ("name", "payer_type", "is_active")
-    list_filter = ("payer_type", "is_active")
-
-
-class ReadOnlyAdmin(admin.ModelAdmin):
-    """Money records are never changed or deleted from the admin site. Use the cashier screens."""
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False
+class LineInline(ReadOnlyAdmin, admin.TabularInline):
+    model = InvoiceLine
+    extra = 0
 
 
 @admin.register(Invoice)
-class InvoiceAdmin(ReadOnlyAdmin):
-    list_display = ("number", "patient", "payer", "status", "created_at")
-    list_filter = ("status",)
-    search_fields = ("number", "patient__last_name")
-
-
-@admin.register(InvoiceLine)
-class InvoiceLineAdmin(ReadOnlyAdmin):
-    list_display = ("invoice", "description", "amount", "is_removed")
+class InvoiceAdmin(ReadOnlyAdmin, admin.ModelAdmin):
+    list_display = ("number", "patient", "status", "payer_kind", "created_at")
+    list_filter = ("status", "payer_kind")
+    inlines = [LineInline]
 
 
 @admin.register(Payment)
-class PaymentAdmin(ReadOnlyAdmin):
-    list_display = ("receipt_number", "invoice", "method", "amount", "received_at")
+class PaymentAdmin(ReadOnlyAdmin, admin.ModelAdmin):
+    list_display = ("receipt_number", "invoice", "method", "amount", "received_by", "created_at")
     list_filter = ("method",)
 
 
-@admin.register(MpesaRequest)
-class MpesaRequestAdmin(ReadOnlyAdmin):
-    list_display = ("checkout_request_id", "invoice", "amount", "status", "created_at")
+@admin.register(CashUp)
+class CashUpAdmin(ReadOnlyAdmin, admin.ModelAdmin):
+    list_display = ("day", "cashier", "difference")
+
+
+class ClaimLineInline(ReadOnlyAdmin, admin.TabularInline):
+    model = ClaimLine
+    extra = 0
+
+
+@admin.register(Claim)
+class ClaimAdmin(ReadOnlyAdmin, admin.ModelAdmin):
+    list_display = ("number", "payer_kind", "status", "batch", "amount_claimed")
+    list_filter = ("status", "payer_kind", "batch")
+    inlines = [ClaimLineInline]

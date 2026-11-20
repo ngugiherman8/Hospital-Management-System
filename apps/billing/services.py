@@ -1,364 +1,462 @@
-"""All the billing rules live here so views, signals and tests use the same code."""
+"""All money movements go through here, so the rules live in one place."""
 
-import json
+import csv
+import datetime
+import io
 import logging
-import re
-import urllib.request
-from base64 import b64encode
 from decimal import Decimal
 
-from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 from django.utils import timezone
 
-from .models import Invoice, InvoiceLine, MpesaRequest, Payer, Payment, ServiceItem
+from apps.accounts.models import Role
+
+from .models import (
+    ZERO,
+    CashUp,
+    ChargeAlert,
+    Claim,
+    ClaimLine,
+    Invoice,
+    InvoiceLine,
+    PayerKind,
+    Payment,
+    ServiceItem,
+)
 
 log = logging.getLogger(__name__)
-CENT = Decimal("0.01")
+
+CLAIM_PAYERS = (PayerKind.SHA, PayerKind.INSURER, PayerKind.CORPORATE)
+CASHUP_METHODS = (Payment.Method.CASH, Payment.Method.MPESA, Payment.Method.CARD, Payment.Method.DEPOSIT)
 
 
-class BillingError(Exception):
-    """A billing step that is not allowed. The message is safe to show to staff."""
+def _money(value):
+    return Decimal(value).quantize(Decimal("0.01"))
 
 
-# ------------------------------------------------------------------------------------------------ services
-BASE_SERVICES = {
-    "REG": ("Registration fee", ServiceItem.Category.REGISTRATION),
-    "CONSULT": ("Consultation", ServiceItem.Category.CONSULTATION),
-    "BED-GENERAL": ("Bed day, general ward", ServiceItem.Category.BED_DAY),
-    "BED-MATERNITY": ("Bed day, maternity", ServiceItem.Category.BED_DAY),
-    "BED-PAEDIATRIC": ("Bed day, paediatric", ServiceItem.Category.BED_DAY),
-    "BED-PRIVATE": ("Bed day, private ward", ServiceItem.Category.BED_DAY),
-}
+# ---------------------------------------------------------------- charges
 
 
-def base_service(code):
-    name, category = BASE_SERVICES[code]
-    return ServiceItem.objects.get_or_create(code=code, defaults={"name": name, "category": category})[0]
+def draft_invoice_for(patient, appointment=None, user=None):
+    """The draft invoice charges go onto, created when there is none. Finalised invoices are never added to."""
+    draft = Invoice.objects.filter(patient=patient, appointment=appointment, status=Invoice.Status.DRAFT).first()
+    if draft:
+        return draft
+    return Invoice.objects.create(
+        patient=patient,
+        appointment=appointment,
+        payer_kind=patient.payer,
+        payer_name=patient.payer_name,
+        member_number=patient.member_number,
+        created_by=user,
+    )
 
 
-def service_for_test(test):
-    category = {"radiology": "imaging", "procedure": "procedure"}.get(test.kind, "lab")
-    return ServiceItem.objects.get_or_create(
-        test=test, defaults={"code": f"TEST-{test.pk}", "name": test.name, "category": category}
-    )[0]
+def post_charge(patient, service, quantity=1, appointment=None, source_key=None, description=None, user=None):
+    """Add one charge to the visit's draft invoice. The same source_key is only ever charged once.
 
-
-def service_for_drug(drug):
-    return ServiceItem.objects.get_or_create(
-        drug=drug, defaults={"code": f"DRUG-{drug.pk}", "name": drug.label, "category": "drug"}
-    )[0]
-
-
-def sync_service_items():
-    """Make sure every test and drug in the catalogues has a billable item to put a price on."""
-    from apps.orders.models import TestCatalogue
-    from apps.pharmacy_rx.models import Drug
-
-    for code in BASE_SERVICES:
-        base_service(code)
-    for t in TestCatalogue.objects.all():
-        service_for_test(t)
-    for d in Drug.objects.all():
-        service_for_drug(d)
-    return ServiceItem.objects.count()
-
-
-# ------------------------------------------------------------------------------------------------ charges
-def target_invoice(visit):
-    """The visit's draft invoice, or a new one. Charges arriving after finalising go on a new draft."""
-    inv = visit.invoices.filter(status=Invoice.Status.DRAFT).order_by("-id").first()
-    if inv:
-        return inv
-    cover = visit.patient.covers.first()
-    return Invoice.objects.create(patient=visit.patient, visit=visit, payer=Payer.for_cover(cover))
-
-
-def add_charge(visit, service, source_key, quantity=1, description=None, user=None):
-    """Add one charge for one clinical event. Does nothing if that event was already charged."""
+    Returns the line, or None when it was already charged or has no price (a ChargeAlert is raised then).
+    """
     if source_key and InvoiceLine.objects.filter(source_key=source_key).exists():
         return None
-    inv = target_invoice(visit)
-    price = service.price_for(inv.payer.payer_type)
-    return InvoiceLine.objects.create(
-        invoice=inv,
-        service=service,
-        description=description or service.name,
-        quantity=quantity,
-        unit_price=price if price is not None else Decimal("0"),
-        price_missing=price is None,
-        source_key=source_key,
-        created_by=user,
+    if service is None or not service.is_active:
+        _alert(patient, appointment, source_key, "No price list entry for this service, add the charge by hand.")
+        return None
+    with transaction.atomic():
+        invoice = draft_invoice_for(patient, appointment, user)
+        price = service.price_for(invoice.payer_kind)
+        if price is None:
+            _alert(patient, appointment, source_key, f"{service.name} has no price. Ask the administrator to set it.")
+            return None
+        try:
+            with transaction.atomic():
+                return InvoiceLine.objects.create(
+                    invoice=invoice,
+                    service=service,
+                    description=description or service.name,
+                    quantity=quantity,
+                    unit_price=price,
+                    source_key=source_key,
+                )
+        except IntegrityError:  # another process charged the same event first
+            return None
+
+
+def _alert(patient, appointment, source_key, message):
+    log.warning("Charge not made (%s): %s", source_key, message)
+    ChargeAlert.objects.get_or_create(
+        patient=patient,
+        appointment=appointment,
+        source_key=source_key or "",
+        resolved_at=None,
+        defaults={"message": message},
     )
 
 
-def bed_days(admission):
-    """One bed day for each calendar day in ward. Admitted today counts as day 1."""
+def withdraw_charge(source_key, reason):
+    """A charged event was cancelled. Remove the line while the invoice is a draft, otherwise raise an alert."""
+    line = InvoiceLine.objects.select_related("invoice__patient").filter(source_key=source_key).first()
+    if line is None or line.removed_at:
+        return
+    if line.invoice.status == Invoice.Status.DRAFT:
+        line.removed_at = timezone.now()
+        line.removal_reason = reason
+        line.save()
+    else:
+        _alert(
+            line.invoice.patient,
+            line.invoice.appointment,
+            f"withdraw:{source_key}",
+            f"{line.description} was cancelled after invoice {line.invoice} was finalised. Review and refund if due.",
+        )
+
+
+def service_by_code(code):
+    return ServiceItem.objects.filter(code=code, is_active=True).first()
+
+
+def charge_bed_nights(admission, today=None):
+    """Charge each night of the stay once. Completed nights only; a same-day stay counts as one night."""
+    today = today or timezone.localdate()
     start = timezone.localtime(admission.admitted_at).date()
     if admission.discharged_at:
-        return max((timezone.localtime(admission.discharged_at).date() - start).days, 1)
-    return (timezone.localdate() - start).days + 1
-
-
-def sync_charges(visit):
-    """Turn what the clinical team recorded into draft charges. Safe to run any number of times."""
-    from apps.wards.models import Admission
-
-    patient = visit.patient
-    add_charge(visit, base_service("REG"), f"reg:{patient.pk}", description="Registration fee")
-    if visit.finished_at:
-        add_charge(visit, base_service("CONSULT"), f"consult:{visit.pk}", description="Consultation")
-    for order in visit.orders.select_related("test"):
-        key = f"order:{order.pk}"
-        if order.status == "cancelled":
-            line = InvoiceLine.objects.filter(source_key=key, is_removed=False, invoice__status="draft").first()
-            if line:
-                remove_line(line, None, "Test cancelled")
-            continue
-        add_charge(visit, service_for_test(order.test), key, description=f"{order.test.name} ({order.number})")
-    for rx in visit.prescriptions.filter(status="dispensed").select_related("drug"):
-        add_charge(
-            visit,
-            service_for_drug(rx.drug),
-            f"rx:{rx.pk}",
-            quantity=rx.quantity,
-            description=f"{rx.drug.label} x {rx.quantity.normalize():f}",
+        end = max(timezone.localtime(admission.discharged_at).date(), start + datetime.timedelta(days=1))
+    else:
+        end = today
+    ward_kind = admission.bed.ward.kind
+    service = service_by_code(f"BED-{ward_kind.upper()}") or service_by_code("BED-GENERAL")
+    made = 0
+    day = start
+    while day < end:
+        line = post_charge(
+            admission.patient,
+            service,
+            appointment=admission.appointment,
+            source_key=f"bed:{admission.pk}:{day.isoformat()}",
+            description=f"Bed day {day:%d %b %Y} ({admission.bed.ward.name})",
         )
-    adm = Admission.objects.filter(visit=visit).select_related("bed__ward").first()
-    if adm:
-        code = f"BED-{adm.bed.ward.ward_type.upper()}"
-        code = code if code in BASE_SERVICES else "BED-GENERAL"
-        for n in range(1, bed_days(adm) + 1):
-            add_charge(visit, base_service(code), f"bed:{adm.pk}:{n}", description=f"Bed day {n}, {adm.bed.ward.name}")
-    reprice_draft_lines(visit)
+        made += 1 if line else 0
+        day += datetime.timedelta(days=1)
+    return made
 
 
-def reprice_draft_lines(visit):
-    """A price set after the charge arrived is picked up while the invoice is still a draft."""
-    lines = InvoiceLine.objects.filter(
-        invoice__visit=visit, invoice__status="draft", price_missing=True, is_removed=False
-    )
-    for line in lines.select_related("service", "invoice__payer"):
-        price = line.service.price_for(line.invoice.payer.payer_type) if line.service else None
-        if price is not None:
-            line.unit_price, line.price_missing = price, False
-            line.save()
-
-
-def remove_line(line, user, reason=""):
-    line.is_removed, line.removed_by, line.removed_at = True, user, timezone.now()
-    line.reason = reason[:200] or line.reason
-    line.save()
-
-
-# ------------------------------------------------------------------------------------------------ invoice steps
-def add_manual_line(invoice, service, quantity, user):
-    if not invoice.is_draft:
-        raise BillingError("Lines can only be added while the invoice is a draft.")
-    if quantity <= 0:
-        raise BillingError("Quantity must be more than zero.")
-    price = service.price_for(invoice.payer.payer_type)
-    return InvoiceLine.objects.create(
-        invoice=invoice,
-        service=service,
-        description=service.name,
-        quantity=quantity,
-        unit_price=price if price is not None else Decimal("0"),
-        price_missing=price is None,
-        created_by=user,
-    )
-
-
-def remove_manual_line(line, user, reason=""):
-    if not line.invoice.is_draft:
-        raise BillingError(
-            "Lines can only be removed while the invoice is a draft. Ask an administrator for a credit note."
-        )
-    remove_line(line, user, reason)
+# ---------------------------------------------------------------- invoices
 
 
 def finalise(invoice, user):
-    if not invoice.is_draft:
-        raise BillingError("Only a draft invoice can be finalised.")
-    if invoice.visit_id:
-        reprice_draft_lines(invoice.visit)
-    if not invoice.active_lines.exists():
-        raise BillingError("The invoice has no lines.")
-    missing = list(invoice.active_lines.filter(price_missing=True).values_list("description", flat=True))
-    if missing:
-        raise BillingError(f"No price is set for: {', '.join(missing)}. Ask an administrator to set the price.")
-    invoice.status = Invoice.Status.OPEN
-    invoice.finalised_at, invoice.finalised_by = timezone.now(), user
-    invoice.save()
-    invoice.refresh_status()
+    with transaction.atomic():
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        if invoice.status != Invoice.Status.DRAFT:
+            raise ValidationError("Only a draft invoice can be finalised.")
+        if not invoice.active_lines.exists():
+            raise ValidationError("An invoice needs at least one line.")
+        from apps.core.models import Sequence
+
+        year = timezone.localdate().year
+        invoice.number = f"INV-{year}-{Sequence.next(f'invoice-{year}'):06d}"
+        invoice.status = Invoice.Status.OPEN
+        invoice.finalised_at = timezone.now()
+        invoice.finalised_by = user
+        invoice.save()
+        invoice.refresh_status()
     return invoice
 
 
-def add_credit_note(invoice, amount, reason, user):
-    if invoice.is_draft or invoice.is_void:
-        raise BillingError("Credit notes are for finalised invoices. Remove the line on a draft instead.")
-    amount = Decimal(amount).quantize(CENT)
-    if amount <= 0:
-        raise BillingError("Enter the credit as a positive amount.")
-    if not reason.strip():
-        raise BillingError("A reason is required.")
-    if amount > invoice.total:
-        raise BillingError("A credit cannot be larger than the invoice total.")
-    InvoiceLine.objects.create(
-        invoice=invoice,
-        description=f"Credit note: {reason.strip()}"[:200],
-        quantity=1,
-        unit_price=-amount,
-        kind=InvoiceLine.Kind.ADJUSTMENT,
-        reason=reason.strip()[:200],
-        created_by=user,
-    )
-    invoice.refresh_status()
-
-
-def void_invoice(invoice, reason, user):
-    if invoice.is_void:
-        raise BillingError("This invoice is already void.")
-    if not reason.strip():
-        raise BillingError("A reason is required to void an invoice.")
-    if invoice.paid != 0:
-        raise BillingError("Refund the payments on this invoice first, then void it.")
-    invoice.status, invoice.void_reason = Invoice.Status.VOID, reason.strip()[:200]
-    invoice.voided_by, invoice.voided_at = user, timezone.now()
-    invoice.save()
-
-
-MPESA_CODE = re.compile(r"^[A-Z0-9]{8,12}$")
-
-
-def take_payment(invoice, method, amount, user, *, mpesa_code="", reference="", is_deposit=False, external_id=""):
-    amount = Decimal(amount).quantize(CENT)
-    if invoice.is_void:
-        raise BillingError("This invoice is void.")
-    if amount <= 0:
-        raise BillingError("Enter an amount more than zero.")
-    if invoice.is_draft and not is_deposit:
-        raise BillingError("Finalise the invoice before taking payment. Use 'deposit' to take money in advance.")
-    if not is_deposit and amount > invoice.balance:
-        raise BillingError(f"The balance is {invoice.balance:,.2f}. Take less, or record the extra as a deposit.")
-    code = (mpesa_code or "").strip().upper()
-    if method == Payment.Method.MPESA:
-        if not external_id and not MPESA_CODE.match(code):
-            raise BillingError("Enter the M-Pesa transaction code (8 to 12 letters and numbers).")
-    else:
-        code = ""
-    try:
-        with transaction.atomic():
-            pay = Payment.objects.create(
-                invoice=invoice, method=method, amount=amount, is_deposit=is_deposit, mpesa_code=code,
-                external_id=external_id, reference=reference.strip()[:120], received_by=user,
-            )  # fmt: skip
-    except IntegrityError:
-        raise BillingError("That M-Pesa code or transaction has already been recorded.") from None
-    invoice.refresh_status()
-    return pay
-
-
-def refund(invoice, amount, method, reason, user):
-    amount = Decimal(amount).quantize(CENT)
-    if not reason.strip():
-        raise BillingError("A reason is required for a refund.")
-    if amount <= 0:
-        raise BillingError("Enter the refund as a positive amount.")
-    if amount > invoice.paid:
-        raise BillingError(f"Only {invoice.paid:,.2f} has been paid on this invoice.")
-    pay = Payment.objects.create(
-        invoice=invoice, method=method, amount=-amount, refund_reason=reason.strip()[:200], received_by=user,
-        approved_by=user,
-    )  # fmt: skip
-    invoice.refresh_status()
-    return pay
-
-
-# ------------------------------------------------------------------------------------------------ M-Pesa
-def _post(url, payload, headers):
-    req = urllib.request.Request(url, json.dumps(payload).encode(), headers, method="POST")
-    with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-        return json.loads(resp.read())
-
-
-def _get_token():
-    base = "https://api.safaricom.co.ke" if settings.MPESA_ENV == "production" else "https://sandbox.safaricom.co.ke"
-    cred = b64encode(f"{settings.MPESA_CONSUMER_KEY}:{settings.MPESA_CONSUMER_SECRET}".encode()).decode()
-    req = urllib.request.Request(
-        f"{base}/oauth/v1/generate?grant_type=client_credentials", headers={"Authorization": f"Basic {cred}"}
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-        return base, json.loads(resp.read())["access_token"]
-
-
-def mpesa_configured():
-    s = settings
-    return all([s.MPESA_CONSUMER_KEY, s.MPESA_CONSUMER_SECRET, s.MPESA_SHORTCODE, s.MPESA_PASSKEY,
-                s.MPESA_CALLBACK_TOKEN, s.MPESA_CALLBACK_BASE])  # fmt: skip
-
-
-def send_mpesa_prompt(invoice, phone, amount, user):
-    """Ask the patient's phone for payment. The result arrives later, at the callback."""
-    if not mpesa_configured():
-        raise BillingError("Automatic M-Pesa is not set up yet. Type in the M-Pesa code instead.")
-    amount = Decimal(amount).quantize(CENT)
-    if invoice.is_draft or invoice.is_void or amount <= 0 or amount > invoice.balance:
-        raise BillingError("Finalise the invoice and ask for no more than the balance.")
-    from apps.patients.models import normalize_phone
-
-    msisdn = normalize_phone(phone)
-    stamp = timezone.now().strftime("%Y%m%d%H%M%S")
-    password = b64encode(f"{settings.MPESA_SHORTCODE}{settings.MPESA_PASSKEY}{stamp}".encode()).decode()
-    base, token = _get_token()
-    body = _post(
-        f"{base}/mpesa/stkpush/v1/processrequest",
-        {
-            "BusinessShortCode": settings.MPESA_SHORTCODE, "Password": password, "Timestamp": stamp,
-            "TransactionType": "CustomerPayBillOnline", "Amount": int(amount), "PartyA": msisdn,
-            "PartyB": settings.MPESA_SHORTCODE, "PhoneNumber": msisdn,
-            "CallBackURL": f"{settings.MPESA_CALLBACK_BASE}/billing/mpesa/callback/{settings.MPESA_CALLBACK_TOKEN}/",
-            "AccountReference": invoice.number, "TransactionDesc": f"Hospital bill {invoice.number}",
-        },
-        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    )  # fmt: skip
-    cid = body.get("CheckoutRequestID")
-    if not cid:
-        raise BillingError(f"M-Pesa did not accept the request: {body.get('errorMessage') or body}")
-    return MpesaRequest.objects.create(
-        checkout_request_id=cid, invoice=invoice, amount=amount, phone=msisdn, created_by=user
+def add_line(invoice, service, quantity, user):
+    if not invoice.is_draft:
+        raise ValidationError("Lines can only be added to a draft invoice.")
+    price = service.price_for(invoice.payer_kind)
+    if price is None:
+        raise ValidationError(f"{service.name} has no price.")
+    return InvoiceLine.objects.create(
+        invoice=invoice, service=service, description=service.name, quantity=quantity, unit_price=price
     )
 
 
-def apply_mpesa_callback(payload):
-    """Handle Safaricom's result. Each provider transaction becomes one payment, however often it is sent."""
-    cb = (payload.get("Body") or {}).get("stkCallback") or {}
-    cid = cb.get("CheckoutRequestID", "")
-    req = MpesaRequest.objects.filter(checkout_request_id=cid).select_related("invoice").first()
-    if not req:
-        log.warning("M-Pesa callback for an unknown request: %s", cid)
-        return None
-    if cb.get("ResultCode") != 0:
-        if req.status == MpesaRequest.Status.PENDING:
-            req.status, req.result_desc = MpesaRequest.Status.FAILED, str(cb.get("ResultDesc", ""))[:200]
-            req.save()
-        return None
-    items = {i.get("Name"): i.get("Value") for i in (cb.get("CallbackMetadata") or {}).get("Item", [])}
-    amount = Decimal(str(items.get("Amount", req.amount)))
-    receipt = str(items.get("MpesaReceiptNumber", "")).upper()
+def remove_line(line, user, reason=""):
+    if not line.invoice.is_draft:
+        raise ValidationError("Lines can only be removed before the invoice is finalised.")
+    if line.removed_at:
+        return
+    line.removed_at = timezone.now()
+    line.removed_by = user
+    line.removal_reason = reason or "Removed by cashier"
+    line.save()
+
+
+def void_invoice(invoice, user, reason):
+    if not user.has_role(Role.ADMIN):
+        raise PermissionError("Only an administrator can void an invoice.")
+    if not reason.strip():
+        raise ValidationError("Give a reason for voiding the invoice.")
     with transaction.atomic():
-        existing = Payment.objects.filter(external_id=cid).first()
-        if existing:
-            return existing  # a repeat of a callback we already handled
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        if invoice.status == Invoice.Status.VOID:
+            raise ValidationError("This invoice is already void.")
+        if invoice.paid != 0:
+            raise ValidationError("Refund the payments on this invoice before voiding it.")
+        if hasattr(invoice, "claim") and invoice.claim.status in ("submitted", "approved", "paid"):
+            raise ValidationError("This invoice has a claim with the payer. Deal with the claim first.")
+        invoice.status = Invoice.Status.VOID
+        invoice.void_reason = reason.strip()
+        invoice.voided_at = timezone.now()
+        invoice.voided_by = user
+        invoice.save()
+    return invoice
+
+
+# ---------------------------------------------------------------- payments
+
+
+def _cashier_closed(user, day):
+    return CashUp.objects.filter(cashier=user, day=day).exists()
+
+
+def take_payment(invoice, method, amount, user, mpesa_code="", reference=""):
+    amount = _money(amount)
+    if amount <= 0:
+        raise ValidationError("The amount must be more than zero.")
+    mpesa_code = mpesa_code.strip().upper()
+    if method == Payment.Method.MPESA and not mpesa_code:
+        raise ValidationError("Type in the M-Pesa transaction code.")
+    if method != Payment.Method.MPESA:
+        mpesa_code = ""
+    if method != Payment.Method.INSURER and _cashier_closed(user, timezone.localdate()):
+        raise ValidationError("You have already closed today. Payments after cash-up go in tomorrow's day.")
+    with transaction.atomic():
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        if invoice.status in (Invoice.Status.DRAFT, Invoice.Status.VOID):
+            raise ValidationError("Payments can only be taken on a finalised invoice.")
+        if amount > invoice.balance:
+            raise ValidationError(f"The amount is more than the balance of {invoice.balance}.")
         try:
             with transaction.atomic():
-                pay = Payment.objects.create(
-                    invoice=req.invoice, method=Payment.Method.MPESA, amount=amount, mpesa_code=receipt,
-                    external_id=cid, reference=f"STK {items.get('PhoneNumber', req.phone)}", received_by=req.created_by,
-                )  # fmt: skip
+                payment = Payment.objects.create(
+                    invoice=invoice,
+                    method=method,
+                    amount=amount,
+                    mpesa_code=mpesa_code,
+                    reference=reference,
+                    received_by=user,
+                )
         except IntegrityError:
-            return Payment.objects.filter(external_id=cid).first()  # two copies arrived at the same moment
-        req.status = MpesaRequest.Status.PAID
-        req.save()
-        req.invoice.refresh_status()
-        return pay
+            raise ValidationError("That M-Pesa code has already been recorded.") from None
+        invoice.refresh_status()
+    return payment
+
+
+def record_mpesa_confirmation(invoice_number, code, amount):
+    """Handle a payment confirmation from M-Pesa. Safe to call twice with the same code.
+
+    Returns (payment, created). The second and later calls with a code return the first payment.
+    """
+    code = code.strip().upper()
+    existing = Payment.objects.filter(mpesa_code=code, amount__gt=0).first()
+    if existing:
+        return existing, False
+    invoice = Invoice.objects.filter(number=invoice_number).first()
+    if invoice is None:
+        raise ValidationError("Unknown invoice number.")
+    amount = _money(amount)
+    with transaction.atomic():
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        try:
+            with transaction.atomic():
+                payment = Payment.objects.create(
+                    invoice=invoice,
+                    method=Payment.Method.MPESA,
+                    amount=amount,
+                    mpesa_code=code,
+                    reference="Automatic confirmation",
+                )
+        except IntegrityError:
+            return Payment.objects.get(mpesa_code=code, amount__gt=0), False
+        invoice.refresh_status()
+    return payment, True
+
+
+def refund(invoice, amount, user, reason, method=Payment.Method.CASH):
+    if not user.has_role(Role.ADMIN):
+        raise PermissionError("Only an administrator can approve a refund.")
+    amount = _money(amount)
+    if amount <= 0:
+        raise ValidationError("The refund amount must be more than zero.")
+    if not reason.strip():
+        raise ValidationError("Give a reason for the refund.")
+    with transaction.atomic():
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        if amount > invoice.paid:
+            raise ValidationError(f"Only {invoice.paid} has been paid on this invoice.")
+        payment = Payment.objects.create(
+            invoice=invoice,
+            method=method,
+            amount=-amount,
+            reason=reason.strip(),
+            received_by=user,
+            approved_by=user,
+        )
+        invoice.refresh_status()
+    return payment
+
+
+# ---------------------------------------------------------------- end of day
+
+
+def expected_for(cashier, day):
+    rows = Payment.objects.filter(received_by=cashier, created_at__date=day, method__in=CASHUP_METHODS)
+    out = {}
+    for method in CASHUP_METHODS:
+        total = rows.filter(method=method).aggregate(t=Sum("amount"))["t"] or ZERO
+        out[method.value] = str(_money(total))
+    return out
+
+
+def close_day(cashier, day, counted, explanation=""):
+    """Sign off the cashier's day. A difference needs an explanation."""
+    if CashUp.objects.filter(cashier=cashier, day=day).exists():
+        raise ValidationError("This day is already closed.")
+    expected = expected_for(cashier, day)
+    counted = {m.value: str(_money(counted.get(m.value, 0))) for m in CASHUP_METHODS}
+    difference = sum((Decimal(counted[m]) - Decimal(expected[m]) for m in expected), ZERO)
+    if difference != 0 and not explanation.strip():
+        raise ValidationError(f"The count is out by {difference}. Write what you think explains it.")
+    return CashUp.objects.create(
+        cashier=cashier, day=day, expected=expected, counted=counted, difference=difference, explanation=explanation
+    )
+
+
+def day_reconciliation(day):
+    """Totals for a day worked out two ways. Every `ok` must be true for the day to balance."""
+    pay = Payment.objects.filter(created_at__date=day)
+    by_method = {m.value: pay.filter(method=m).aggregate(t=Sum("amount"))["t"] or ZERO for m in Payment.Method}
+    received = pay.filter(amount__gt=0).aggregate(t=Sum("amount"))["t"] or ZERO
+    refunded = pay.filter(amount__lt=0).aggregate(t=Sum("amount"))["t"] or ZERO
+    cash_ups = CashUp.objects.filter(day=day)
+    cashiers_with_payments = set(pay.exclude(method=Payment.Method.INSURER).values_list("received_by", flat=True))
+    closed = set(cash_ups.values_list("cashier", flat=True))
+    invoices = Invoice.objects.filter(finalised_at__date=day).exclude(status=Invoice.Status.VOID)
+    billed = sum((i.total for i in invoices), ZERO)
+    return {
+        "day": day,
+        "invoices": invoices.count(),
+        "billed": billed,
+        "by_method": by_method,
+        "received": received,
+        "refunded": refunded,
+        "net": received + refunded,
+        "ledger_ok": sum(by_method.values(), ZERO) == received + refunded,
+        "unclosed_cashiers": sorted(cashiers_with_payments - closed - {None}),
+        "cash_ups": cash_ups,
+        "unexplained": [c for c in cash_ups if c.difference != 0 and not c.explanation],
+        "difference_total": sum((c.difference for c in cash_ups), ZERO),
+    }
+
+
+# ---------------------------------------------------------------- claims
+
+
+def create_claim(invoice, user):
+    if invoice.payer_kind not in CLAIM_PAYERS:
+        raise ValidationError("Only invoices for SHA, insurers or corporate payers have claims.")
+    if invoice.status in (Invoice.Status.DRAFT, Invoice.Status.VOID):
+        raise ValidationError("Finalise the invoice before making a claim.")
+    if hasattr(invoice, "claim"):
+        raise ValidationError("This invoice already has a claim.")
+    diagnoses = ""
+    if invoice.appointment_id:
+        consultation = getattr(invoice.appointment, "consultation", None)
+        if consultation:
+            diagnoses = "; ".join(f"{d.icd10_code} {d.name}".strip() for d in consultation.diagnoses.all())[:300]
+    visit_date = invoice.appointment.visit_date if invoice.appointment_id else timezone.localdate(invoice.finalised_at)
+    with transaction.atomic():
+        claim = Claim.objects.create(
+            invoice=invoice,
+            payer_kind=invoice.payer_kind,
+            payer_name=invoice.payer_name,
+            member_number=invoice.member_number,
+            diagnoses=diagnoses,
+            batch=f"{visit_date:%Y-%m}",
+            amount_claimed=invoice.total,
+        )
+        for line in invoice.active_lines:
+            ClaimLine.objects.create(
+                claim=claim,
+                description=line.description,
+                quantity=line.quantity,
+                unit_price=line.unit_price,
+                amount=line.amount,
+            )
+    return claim
+
+
+def _claim_move(claim, allowed_from, to):
+    if claim.status not in allowed_from:
+        raise ValidationError(f"A {claim.get_status_display().lower()} claim cannot become {to}.")
+    claim.status = to
+
+
+def reject_claim(claim, reason):
+    if not reason.strip():
+        raise ValidationError("Write the payer's reason for rejecting the claim.")
+    _claim_move(claim, ("submitted", "approved"), Claim.Status.REJECTED)
+    claim.rejection_reason = reason.strip()
+    claim.save()
+
+
+def correct_claim(claim, member_number, diagnoses):
+    """Fix the details of a rejected claim and return it to draft, ready to export again."""
+    _claim_move(claim, ("rejected",), Claim.Status.DRAFT)
+    claim.member_number = member_number
+    claim.diagnoses = diagnoses
+    claim.resubmissions += 1
+    claim.save()
+
+
+def approve_claim(claim, amount):
+    _claim_move(claim, ("submitted",), Claim.Status.APPROVED)
+    claim.amount_approved = _money(amount)
+    claim.rejection_reason = ""
+    claim.save()
+
+
+def mark_claim_paid(claim, user, amount, reference=""):
+    """The payer has paid. Record it as an insurer payment on the invoice so the invoice balance falls."""
+    _claim_move(claim, ("approved", "submitted"), Claim.Status.PAID)
+    with transaction.atomic():
+        take_payment(claim.invoice, Payment.Method.INSURER, amount, user, reference=reference or claim.number)
+        claim.paid_at = timezone.now()
+        claim.save()
+
+
+CLAIM_COLUMNS = [
+    "claim_number", "payer", "payer_name", "member_number", "hospital_number", "patient", "visit_date",
+    "diagnoses", "invoice_number", "line_description", "quantity", "unit_price", "line_amount", "claim_total",
+    "resubmission",
+]  # fmt: skip
+
+
+def export_claims(claims, mark_submitted=True):
+    """One CSV for the given claims, a row per claim line. Drafts become submitted."""
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(CLAIM_COLUMNS)
+    now = timezone.now()
+    for claim in claims.select_related("invoice__patient", "invoice__appointment").prefetch_related("lines"):
+        patient = claim.invoice.patient
+        visit = claim.invoice.appointment.visit_date if claim.invoice.appointment_id else ""
+        for line in claim.lines.all():
+            writer.writerow(
+                [
+                    claim.number, claim.get_payer_kind_display(), claim.payer_name, claim.member_number,
+                    patient.hospital_number, patient.full_name, visit, claim.diagnoses, claim.invoice.number,
+                    line.description, line.quantity, line.unit_price, line.amount, claim.amount_claimed,
+                    claim.resubmissions,
+                ]
+            )  # fmt: skip
+        if mark_submitted and claim.status == Claim.Status.DRAFT:
+            claim.status = Claim.Status.SUBMITTED
+            claim.submitted_at = now
+            claim.save()
+    return out.getvalue()

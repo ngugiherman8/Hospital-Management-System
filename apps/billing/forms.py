@@ -1,15 +1,11 @@
-from decimal import Decimal
-
 from django import forms
 
-from .models import Payment, ServiceItem
-
-MONEY_INPUT = {"step": "0.01", "min": "0.01"}
+from .models import Claim, Invoice, Payment, ServiceItem
 
 
 class AddLineForm(forms.Form):
-    service = forms.ModelChoiceField(ServiceItem.objects.none(), label="Service")
-    quantity = forms.DecimalField(min_value=Decimal("0.01"), max_digits=8, decimal_places=2, initial=1)
+    service = forms.ModelChoiceField(queryset=ServiceItem.objects.none())
+    quantity = forms.IntegerField(min_value=1, initial=1)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -17,32 +13,50 @@ class AddLineForm(forms.Form):
 
 
 class PaymentForm(forms.Form):
-    method = forms.ChoiceField(choices=Payment.Method.choices, initial="cash")
-    amount = forms.DecimalField(min_value=Decimal("0.01"), max_digits=12, decimal_places=2,
-                                widget=forms.NumberInput(attrs=MONEY_INPUT))  # fmt: skip
-    mpesa_code = forms.CharField(required=False, max_length=20, label="M-Pesa code")
-    reference = forms.CharField(required=False, max_length=120, label="Reference (card slip, cheque, etc.)")
-    is_deposit = forms.BooleanField(required=False, label="Deposit (money taken in advance)")
+    method = forms.ChoiceField(choices=Payment.Method.choices)
+    amount = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0.01)
+    mpesa_code = forms.CharField(max_length=20, required=False, label="M-Pesa code")
+    reference = forms.CharField(max_length=100, required=False, label="Card slip or reference")
+
+    def __init__(self, *args, show_insurer=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not show_insurer:  # insurer money arrives through a claim, not the till
+            self.fields["method"].choices = [c for c in Payment.Method.choices if c[0] != "insurer"]
 
 
-class MpesaPromptForm(forms.Form):
-    phone = forms.CharField(max_length=20, label="Patient's M-Pesa phone")
-    amount = forms.DecimalField(min_value=Decimal("0.01"), max_digits=12, decimal_places=2,
-                                widget=forms.NumberInput(attrs=MONEY_INPUT))  # fmt: skip
+class ReasonForm(forms.Form):
+    reason = forms.CharField(max_length=300)
 
 
-class RefundForm(forms.Form):
-    amount = forms.DecimalField(min_value=Decimal("0.01"), max_digits=12, decimal_places=2,
-                                widget=forms.NumberInput(attrs=MONEY_INPUT))  # fmt: skip
-    method = forms.ChoiceField(choices=Payment.Method.choices, initial="cash", label="Paid back by")
-    reason = forms.CharField(max_length=200)
+class RefundForm(ReasonForm):
+    amount = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0.01)
+    method = forms.ChoiceField(choices=[c for c in Payment.Method.choices if c[0] != "insurer"], initial="cash")
 
 
-class CreditForm(forms.Form):
-    amount = forms.DecimalField(min_value=Decimal("0.01"), max_digits=12, decimal_places=2,
-                                widget=forms.NumberInput(attrs=MONEY_INPUT))  # fmt: skip
-    reason = forms.CharField(max_length=200)
+class PayerForm(forms.ModelForm):
+    class Meta:
+        model = Invoice
+        fields = ["payer_kind", "payer_name", "member_number"]
 
 
-class VoidForm(forms.Form):
-    reason = forms.CharField(max_length=200)
+class CashUpForm(forms.Form):
+    cash = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, initial=0)
+    mpesa = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, initial=0, label="M-Pesa")
+    card = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, initial=0)
+    deposit = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, initial=0)
+    explanation = forms.CharField(max_length=300, required=False, label="If the count is out, why?")
+
+
+class ClaimCorrectForm(forms.Form):
+    member_number = forms.CharField(max_length=60)
+    diagnoses = forms.CharField(max_length=300)
+
+
+class ClaimAmountForm(forms.Form):
+    amount = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    reference = forms.CharField(max_length=100, required=False)
+
+
+class ClaimFilterForm(forms.Form):
+    month = forms.CharField(required=False, max_length=7, label="Month (YYYY-MM)")
+    status = forms.ChoiceField(choices=[("", "Any status")] + Claim.Status.choices, required=False)

@@ -1,95 +1,76 @@
-"""Money rules: DecimalField(12, 2) in Kenyan shillings, never floats. Invoices, lines and payments are never
-edited or deleted. A mistake is fixed by a new reversing row (void, credit note, refund) with a reason and a name."""
-
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import models, transaction
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models import Q, Sum
 from django.utils import timezone
 
-from apps.core.audit import AuditedModel
-from apps.core.models import Sequence
-from apps.patients.models import PayerType
+from apps.appointments.models import Appointment
+from apps.core.appendonly import AppendOnlyModel
+from apps.core.models import AuditedModel, Sequence
+from apps.dental.models import DentalProcedure
+from apps.orders.models import TestCatalogue
+from apps.patients.models import Patient
+from apps.pharmacy_rx.models import Drug
 
-MONEY = {"max_digits": 12, "decimal_places": 2}
-
-
-class Payer(AuditedModel):
-    """Who pays: cash, SHA, or a named insurer or company."""
-
-    name = models.CharField(max_length=120, unique=True)
-    payer_type = models.CharField(max_length=12, choices=PayerType.choices, default=PayerType.CASH)
-    is_active = models.BooleanField(default=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    @classmethod
-    def for_cover(cls, cover):
-        """The payer for a patient's primary cover (created on first use)."""
-        ptype = cover.payer_type if cover else PayerType.CASH
-        if ptype == PayerType.CASH:
-            name = "Cash / M-Pesa"
-        elif ptype == PayerType.SHA:
-            name = "SHA"
-        else:
-            name = (cover.insurer_name or dict(PayerType.choices)[ptype]).strip()
-        payer, _ = cls.objects.get_or_create(name=name, defaults={"payer_type": ptype})
-        return payer
-
-    def __str__(self):
-        return self.name
+MONEY = dict(max_digits=12, decimal_places=2)
+ZERO = Decimal("0.00")
+PayerKind = Patient.Payer
 
 
 class ServiceItem(AuditedModel):
+    """Something the hospital charges for. Links to the catalogue entry it prices, when there is one."""
+
     class Category(models.TextChoices):
         REGISTRATION = "registration", "Registration"
         CONSULTATION = "consultation", "Consultation"
         LAB = "lab", "Laboratory test"
         IMAGING = "imaging", "Imaging"
-        DRUG = "drug", "Medicine"
-        BED_DAY = "bed_day", "Bed day"
-        PROCEDURE = "procedure", "Procedure"
-        DENTAL = "dental", "Dental"
+        DENTAL = "dental", "Dental procedure"
+        BED = "bed", "Bed day"
+        DRUG = "drug", "Drug"
+        ANTENATAL = "antenatal", "Antenatal or postnatal contact"
         OTHER = "other", "Other"
 
-    code = models.CharField(max_length=30, unique=True)
+    code = models.CharField(max_length=40, unique=True)
     name = models.CharField(max_length=160)
-    category = models.CharField(max_length=14, choices=Category.choices, default=Category.OTHER)
-    test = models.OneToOneField(
-        "orders.TestCatalogue", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
+    category = models.CharField(max_length=14, choices=Category.choices)
+    test = models.OneToOneField(TestCatalogue, null=True, blank=True, on_delete=models.PROTECT, related_name="service")
+    drug = models.OneToOneField(Drug, null=True, blank=True, on_delete=models.PROTECT, related_name="service")
+    dental_procedure = models.OneToOneField(
+        DentalProcedure, null=True, blank=True, on_delete=models.PROTECT, related_name="service"
     )
-    drug = models.OneToOneField("pharmacy_rx.Drug", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["category", "name"]
 
-    def price_for(self, payer_type):
-        """Price for this payer type, falling back to the cash price. None when no price is set."""
-        prices = {p.payer_type: p.amount for p in self.prices.all()}
-        if payer_type in prices:
-            return prices[payer_type]
-        return prices.get(PayerType.CASH)
-
     def __str__(self):
-        return f"{self.code} {self.name}"
+        return f"{self.name} ({self.code})"
+
+    def price_for(self, payer_kind):
+        """The price for this payer type; self-pay price when none is set for the payer. None if unpriced."""
+        prices = {p.payer_kind: p.amount for p in self.prices.all()}
+        if payer_kind in prices:
+            return prices[payer_kind]
+        return prices.get(PayerKind.CASH)
 
 
-class Price(AuditedModel):
+class ItemPrice(AuditedModel):
     service = models.ForeignKey(ServiceItem, on_delete=models.CASCADE, related_name="prices")
-    payer_type = models.CharField(max_length=12, choices=PayerType.choices)
+    payer_kind = models.CharField(max_length=20, choices=PayerKind.choices)
     amount = models.DecimalField(**MONEY)
 
     class Meta:
-        ordering = ["service", "payer_type"]
-        constraints = [
-            models.UniqueConstraint(fields=["service", "payer_type"], name="one_price_per_service_and_payer_type"),
-            models.CheckConstraint(condition=models.Q(amount__gte=0), name="price_not_negative"),
-        ]
+        constraints = [models.UniqueConstraint(fields=["service", "payer_kind"], name="one_price_per_payer")]
 
     def __str__(self):
-        return f"{self.service.code} {self.get_payer_type_display()}: {self.amount}"
+        return f"{self.service.name}: {self.get_payer_kind_display()} {self.amount}"
+
+    def clean(self):
+        if self.amount is not None and self.amount < 0:
+            raise ValidationError("A price cannot be negative.")
 
 
 class Invoice(AuditedModel):
@@ -100,215 +81,246 @@ class Invoice(AuditedModel):
         PAID = "paid", "Paid"
         VOID = "void", "Void"
 
-    number = models.CharField(max_length=24, unique=True, editable=False)
-    patient = models.ForeignKey("patients.Patient", on_delete=models.PROTECT, related_name="invoices")
-    visit = models.ForeignKey(
-        "clinical.Visit", null=True, blank=True, on_delete=models.PROTECT, related_name="invoices"
+    number = models.CharField(max_length=30, blank=True, editable=False)
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT, related_name="invoices")
+    appointment = models.ForeignKey(
+        Appointment, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices"
     )
-    payer = models.ForeignKey(Payer, on_delete=models.PROTECT, related_name="invoices")
+    payer_kind = models.CharField(max_length=20, choices=PayerKind.choices, default=PayerKind.CASH)
+    payer_name = models.CharField(max_length=150, blank=True)
+    member_number = models.CharField(max_length=60, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT, db_index=True)
-    created_at = models.DateTimeField(default=timezone.now)
-    finalised_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", editable=False
+    )
+    finalised_at = models.DateTimeField(null=True, blank=True, editable=False)
     finalised_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", editable=False
     )
-    void_reason = models.CharField(max_length=200, blank=True)
+    void_reason = models.CharField(max_length=300, blank=True, editable=False)
+    voided_at = models.DateTimeField(null=True, blank=True, editable=False)
     voided_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", editable=False
     )
-    voided_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-created_at", "-id"]
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["number"], condition=~Q(number=""), name="unique_invoice_number")
+        ]
 
-    def save(self, *args, **kwargs):
-        if self._state.adding and not self.number:
-            with transaction.atomic():
-                self.number = Sequence.next_number("INV")
-                return super().save(*args, **kwargs)
-        return super().save(*args, **kwargs)
+    def __str__(self):
+        return self.number or f"Draft {self.pk}"
 
     def delete(self, *args, **kwargs):
-        raise PermissionError("Invoices cannot be deleted. Void them instead.")
+        raise PermissionError("Invoices cannot be deleted. Void the invoice instead.")
 
-    # amounts are always worked out from the rows, never stored, so they cannot drift
     @property
     def active_lines(self):
-        return self.lines.filter(is_removed=False)
+        return self.lines.filter(removed_at__isnull=True)
 
     @property
-    def total(self) -> Decimal:
-        return self.active_lines.aggregate(t=models.Sum("amount"))["t"] or Decimal("0.00")
+    def total(self):
+        return self.active_lines.aggregate(t=Sum("amount"))["t"] or ZERO
 
     @property
-    def paid(self) -> Decimal:
-        """Net of refunds."""
-        return self.payments.aggregate(t=models.Sum("amount"))["t"] or Decimal("0.00")
+    def paid(self):
+        """Money received minus money refunded."""
+        return self.payments.aggregate(t=Sum("amount"))["t"] or ZERO
 
     @property
-    def balance(self) -> Decimal:
+    def balance(self):
         return self.total - self.paid
 
     @property
     def is_draft(self):
         return self.status == self.Status.DRAFT
 
-    @property
-    def is_void(self):
-        return self.status == self.Status.VOID
-
-    @property
-    def has_missing_prices(self):
-        return self.active_lines.filter(price_missing=True).exists()
-
     def refresh_status(self):
-        """Open, part-paid or paid follows the payments. Draft and void are set deliberately."""
+        """Set open, part-paid or paid from the lines and payments. Draft and void are left alone."""
         if self.status in (self.Status.DRAFT, self.Status.VOID):
             return
-        total, paid = self.total, self.paid
-        if paid >= total:
-            new = self.Status.PAID
-        elif paid > 0:
+        paid, total = self.paid, self.total
+        if paid <= 0:
+            new = self.Status.OPEN
+        elif paid < total:
             new = self.Status.PART_PAID
         else:
-            new = self.Status.OPEN
+            new = self.Status.PAID
         if new != self.status:
             self.status = new
-            self.save(update_fields=["status"])
-
-    def __str__(self):
-        return f"{self.number} {self.patient.full_name}"
+            self.save(update_fields=["status", "updated_at"])
 
 
 class InvoiceLine(AuditedModel):
-    class Kind(models.TextChoices):
-        CHARGE = "charge", "Charge"
-        ADJUSTMENT = "adjustment", "Credit note"
-
     invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="lines")
-    service = models.ForeignKey(ServiceItem, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    service = models.ForeignKey(ServiceItem, on_delete=models.PROTECT, related_name="+")
     description = models.CharField(max_length=200)
-    quantity = models.DecimalField(max_digits=8, decimal_places=2, default=1)
+    quantity = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(**MONEY)
     amount = models.DecimalField(**MONEY, editable=False)
-    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.CHARGE)
-    source_key = models.CharField(max_length=60, blank=True, help_text="Which clinical event created this charge")
-    price_missing = models.BooleanField(default=False)
-    reason = models.CharField(max_length=200, blank=True)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    created_at = models.DateTimeField(default=timezone.now)
-    is_removed = models.BooleanField(default=False)
+    # Set by automatic charges so the same event is never charged twice.
+    source_key = models.CharField(max_length=80, null=True, blank=True, unique=True, editable=False)
+    removed_at = models.DateTimeField(null=True, blank=True, editable=False)
     removed_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", editable=False
     )
-    removed_at = models.DateTimeField(null=True, blank=True)
-
-    FROZEN = ("invoice_id", "service_id", "description", "quantity", "kind", "source_key")
+    removal_reason = models.CharField(max_length=200, blank=True, editable=False)
 
     class Meta:
-        ordering = ["created_at", "id"]
-        constraints = [
-            # one charge per clinical event, ever, so syncing again can never double-charge
-            models.UniqueConstraint(
-                fields=["source_key"], condition=~models.Q(source_key=""), name="one_line_per_event"
-            ),
-        ]
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.description} x{self.quantity}"
 
     def save(self, *args, **kwargs):
-        self.amount = (Decimal(self.quantity) * Decimal(self.unit_price)).quantize(Decimal("0.01"))
-        if not self._state.adding:
-            old = InvoiceLine.objects.get(pk=self.pk)
-            if any(getattr(old, f) != getattr(self, f) for f in self.FROZEN):
-                raise PermissionError("Invoice lines cannot be edited. Remove the line or add a credit note.")
-            price_changed = old.unit_price != self.unit_price
-            if price_changed and not old.price_missing:
-                raise PermissionError("A priced invoice line cannot be edited. Remove the line or add a credit note.")
+        if self._state.adding and self.invoice.status != Invoice.Status.DRAFT:
+            raise ValidationError("Lines can only be added to a draft invoice.")
+        self.amount = (self.unit_price * self.quantity).quantize(Decimal("0.01"))
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        raise PermissionError("Invoice lines cannot be deleted.")
+        raise PermissionError("Invoice lines cannot be deleted. Remove the line before finalising instead.")
+
+
+class ChargeAlert(AuditedModel):
+    """A charge the system could not make by itself, for the cashier to look at."""
+
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT, related_name="+")
+    appointment = models.ForeignKey(Appointment, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    source_key = models.CharField(max_length=80)
+    message = models.CharField(max_length=300)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        ordering = ["-id"]
 
     def __str__(self):
-        return f"{self.description}: {self.amount}"
+        return self.message
 
 
-class Payment(AuditedModel):
-    """Append only. A refund is a negative payment approved by an administrator."""
+class CashUp(AuditedModel):
+    """A cashier's end-of-day count against what the system says was taken."""
 
+    cashier = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="cash_ups")
+    day = models.DateField()
+    expected = models.JSONField(default=dict, help_text="Method -> amount the system expects.")
+    counted = models.JSONField(default=dict, help_text="Method -> amount counted.")
+    difference = models.DecimalField(**MONEY, default=ZERO)
+    explanation = models.CharField(max_length=300, blank=True)
+    signed_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        ordering = ["-day", "cashier_id"]
+        constraints = [models.UniqueConstraint(fields=["cashier", "day"], name="one_cash_up_per_cashier_day")]
+
+    def __str__(self):
+        return f"Cash-up {self.day} {self.cashier}"
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("Cash-ups cannot be deleted.")
+
+
+class Payment(AppendOnlyModel):
     class Method(models.TextChoices):
         CASH = "cash", "Cash"
         MPESA = "mpesa", "M-Pesa"
         CARD = "card", "Card"
-        INSURER = "insurer", "Insurer"
+        INSURER = "insurer", "Insurer or SHA"
+        DEPOSIT = "deposit", "Deposit"
 
     invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="payments")
-    method = models.CharField(max_length=8, choices=Method.choices)
-    amount = models.DecimalField(**MONEY)
-    is_deposit = models.BooleanField(default=False, help_text="Taken in advance, for example an inpatient deposit")
+    method = models.CharField(max_length=10, choices=Method.choices)
+    amount = models.DecimalField(**MONEY, help_text="Negative for a refund.")
     mpesa_code = models.CharField(max_length=20, blank=True)
-    external_id = models.CharField(
-        max_length=80, blank=True, help_text="Provider's id, so a repeat callback is ignored"
-    )
-    reference = models.CharField(max_length=120, blank=True)
-    receipt_number = models.CharField(max_length=24, unique=True, editable=False)
+    reference = models.CharField(max_length=100, blank=True, help_text="Card slip number, cheque or remittance.")
+    receipt_number = models.CharField(max_length=30, unique=True, editable=False)
     received_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    received_at = models.DateTimeField(default=timezone.now, db_index=True)
-    refund_reason = models.CharField(max_length=200, blank=True)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
+    reason = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, editable=False, db_index=True)
 
     class Meta:
-        ordering = ["received_at", "id"]
+        ordering = ["id"]
         constraints = [
-            models.CheckConstraint(condition=~models.Q(amount=0), name="payment_not_zero"),
+            # A repeated M-Pesa code (typed twice, or a repeated callback) cannot create a second payment.
             models.UniqueConstraint(
-                fields=["mpesa_code"], condition=~models.Q(mpesa_code=""), name="one_payment_per_mpesa_code"
+                fields=["mpesa_code"], condition=~Q(mpesa_code="") & Q(amount__gt=0), name="unique_mpesa_code"
             ),
-            models.UniqueConstraint(
-                fields=["external_id"], condition=~models.Q(external_id=""), name="one_payment_per_provider_id"
-            ),
+            models.CheckConstraint(condition=~Q(amount=0), name="payment_not_zero"),
         ]
+
+    def __str__(self):
+        return f"{self.receipt_number} {self.amount}"
 
     @property
     def is_refund(self):
         return self.amount < 0
 
     def save(self, *args, **kwargs):
-        if not self._state.adding:
-            raise PermissionError("Payments cannot be edited. Record a refund instead.")
-        if not self.receipt_number:
-            with transaction.atomic():
-                self.receipt_number = Sequence.next_number("RFD" if self.amount < 0 else "RCT")
-                return super().save(*args, **kwargs)
-        return super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        raise PermissionError("Payments cannot be deleted. Record a refund instead.")
-
-    def __str__(self):
-        return f"{self.receipt_number} {self.amount}"
+        if self._state.adding and not self.receipt_number:
+            year = timezone.localdate().year
+            prefix = "RF" if self.amount < 0 else "RC"
+            self.receipt_number = f"{prefix}-{year}-{Sequence.next(f'receipt-{prefix}-{year}'):06d}"
+        super().save(*args, **kwargs)
 
 
-class MpesaRequest(AuditedModel):
-    """An M-Pesa payment prompt sent to a patient's phone, waiting for the provider's callback."""
-
+class Claim(AuditedModel):
     class Status(models.TextChoices):
-        PENDING = "pending", "Waiting for the patient"
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Submitted"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
         PAID = "paid", "Paid"
-        FAILED = "failed", "Failed or cancelled"
 
-    checkout_request_id = models.CharField(max_length=80, unique=True)
-    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="mpesa_requests")
-    amount = models.DecimalField(**MONEY)
-    phone = models.CharField(max_length=15)
-    status = models.CharField(max_length=8, choices=Status.choices, default=Status.PENDING)
-    result_desc = models.CharField(max_length=200, blank=True)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    created_at = models.DateTimeField(default=timezone.now)
+    number = models.CharField(max_length=30, unique=True, editable=False)
+    invoice = models.OneToOneField(Invoice, on_delete=models.PROTECT, related_name="claim")
+    payer_kind = models.CharField(max_length=20, choices=PayerKind.choices)
+    payer_name = models.CharField(max_length=150, blank=True)
+    member_number = models.CharField(max_length=60, blank=True)
+    diagnoses = models.CharField(max_length=300, blank=True, help_text="ICD-10 codes and names.")
+    batch = models.CharField(max_length=7, db_index=True, help_text="Month of the visit, YYYY-MM.")
+    amount_claimed = models.DecimalField(**MONEY, editable=False)
+    amount_approved = models.DecimalField(**MONEY, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    rejection_reason = models.CharField(max_length=300, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    resubmissions = models.PositiveSmallIntegerField(default=0, editable=False)
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["-id"]
 
     def __str__(self):
-        return f"{self.checkout_request_id} {self.status}"
+        return self.number
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("Claims cannot be deleted.")
+
+    def save(self, *args, **kwargs):
+        if not self.number:
+            year = timezone.localdate().year
+            self.number = f"CLM-{year}-{Sequence.next(f'claim-{year}'):06d}"
+        super().save(*args, **kwargs)
+
+
+class ClaimLine(AuditedModel):
+    claim = models.ForeignKey(Claim, on_delete=models.PROTECT, related_name="lines")
+    description = models.CharField(max_length=200)
+    quantity = models.PositiveIntegerField()
+    unit_price = models.DecimalField(**MONEY)
+    amount = models.DecimalField(**MONEY)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return self.description
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("Claim lines cannot be deleted.")
