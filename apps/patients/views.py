@@ -1,164 +1,91 @@
-import re
-
 from django.contrib import messages
-from django.db import transaction
-from django.db.models import Q
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views import View
-from django.views.generic import ListView
+from django.views.decorators.http import require_http_methods
 
-from apps.appointments.models import Clinic, QueueEntry
-from apps.core.audit import log_event
-from apps.core.permissions import FRONT_DESK, FRONT_DESK_AND_CLINICAL, RoleRequiredMixin
+from apps.accounts.models import Role
+from apps.appointments.models import Appointment
+from apps.core.audit import log_access
+from apps.core.permissions import role_required
 
-from .duplicates import find_duplicates
-from .forms import PatientForm
+from .forms import PatientForm, RegistrationExtras
 from .models import Patient
 
-
-def phone_search_q(q):
-    """Match a typed phone number (0712..., +254712..., 712...) against the normalised column."""
-    if not re.fullmatch(r"[\d\s+\-]+", q):
-        return Q(pk__in=[])
-    digits = re.sub(r"\D", "", q)
-    digits = digits[3:] if digits.startswith("254") else digits.lstrip("0")
-    return Q(phone_normalized__contains=digits) if digits else Q(pk__in=[])
+ALL_STAFF = (
+    Role.RECEPTION, Role.NURSE, Role.DOCTOR, Role.LAB, Role.PHARMACIST, Role.CASHIER,
+    Role.DENTIST, Role.MIDWIFE, Role.RADIOGRAPHER, Role.RADIOLOGIST,
+)  # fmt: skip
 
 
-def _dupes_for(form):
-    d = form.cleaned_data if hasattr(form, "cleaned_data") else {}
-    raw = form.data
-    return find_duplicates(
-        first_name=raw.get("first_name", ""),
-        last_name=raw.get("last_name", ""),
-        date_of_birth=d.get("date_of_birth"),
-        phone=raw.get("phone", ""),
-        id_type=raw.get("id_type", ""),
-        id_number=raw.get("id_number", ""),
-        exclude_pk=form.instance.pk,
-    )
+@role_required(*ALL_STAFF)
+def patient_list(request):
+    query = request.GET.get("q", "")
+    page = Paginator(Patient.search(query), 25).get_page(request.GET.get("page"))
+    return render(request, "patients/list.html", {"page": page, "q": query})
 
 
-class PatientListView(RoleRequiredMixin, ListView):
-    allowed_roles = FRONT_DESK_AND_CLINICAL + ("lab", "pharmacist", "cashier")
-    template_name = "patients/list.html"
-    paginate_by = 25
-    context_object_name = "patients"
-
-    def get_queryset(self):
-        q = self.request.GET.get("q", "").strip()
-        qs = Patient.objects.filter(is_active=True)
-        if q:
-            cond = (
-                Q(first_name__icontains=q)
-                | Q(last_name__icontains=q)
-                | Q(hospital_number__icontains=q)
-                | Q(phone__icontains=q)
-                | Q(id_number__icontains=q)
-            )
-            cond |= phone_search_q(q)
-            qs = qs.filter(cond)
-        return qs
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["q"] = self.request.GET.get("q", "")
-        return ctx
-
-    def get_template_names(self):
-        if self.request.htmx:
-            return ["patients/_rows.html"]
-        return [self.template_name]
-
-
-class PatientCreateView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK
-    template_name = "patients/form.html"
-
-    def _ctx(self, form, dupes=None):
-        return {
-            "form": form,
-            "dupes": dupes or [],
-            "clinics": Clinic.objects.filter(is_active=True),
-            "doctors": _doctors(),
-            "title": "Register patient",
-        }
-
-    def get(self, request):
-        return render(request, self.template_name, self._ctx(PatientForm()))
-
-    def post(self, request):
+@role_required(Role.RECEPTION)
+@require_http_methods(["GET", "POST"])
+def patient_create(request):
+    matches = []
+    if request.method == "POST":
         form = PatientForm(request.POST)
-        if not form.is_valid():
-            return render(request, self.template_name, self._ctx(form))
-        dupes = _dupes_for(form)
-        if dupes and not request.POST.get("confirm_new"):
-            # Stop and show possible matches; the receptionist decides.
-            return render(request, self.template_name, self._ctx(form, dupes))
-        with transaction.atomic():
-            patient = form.save()
-            form.save_cover(patient)
-            if request.POST.get("add_to_queue"):
-                clinic = get_object_or_404(Clinic, pk=request.POST.get("clinic"))
-                doctor = _doctors().filter(pk=request.POST.get("doctor") or None).first()
-                QueueEntry.join(patient=patient, clinic=clinic, doctor=doctor)
-        messages.success(request, f"{patient.full_name} registered as {patient.hospital_number}.")
-        return redirect("queue" if request.POST.get("add_to_queue") else patient.get_absolute_url())
-
-
-class PatientDetailView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK_AND_CLINICAL + ("lab", "pharmacist", "cashier")
-
-    def get(self, request, pk):
-        patient = get_object_or_404(Patient, pk=pk)
-        log_event("view", patient)  # every view of a record is audited
-        return render(
-            request,
-            "patients/detail.html",
-            {
-                "patient": patient,
-                "cover": patient.covers.first(),
-                "appointments": patient.appointments.select_related("clinic", "doctor")[:10],
-                "clinics": Clinic.objects.filter(is_active=True),
-                "doctors": _doctors(),
-            },
-        )
-
-
-class PatientEditView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK
-
-    def get(self, request, pk):
-        patient = get_object_or_404(Patient, pk=pk)
-        return render(
-            request,
-            "patients/form.html",
-            {
-                "form": PatientForm(instance=patient),
-                "dupes": [],
-                "title": f"Edit {patient.full_name}",
-                "editing": True,
-                "patient": patient,
-            },
-        )
-
-    def post(self, request, pk):
-        patient = get_object_or_404(Patient, pk=pk)
-        form = PatientForm(request.POST, instance=patient)
-        if not form.is_valid():
-            return render(
-                request,
-                "patients/form.html",
-                {"form": form, "dupes": [], "title": f"Edit {patient.full_name}", "editing": True, "patient": patient},
+        extras = RegistrationExtras(request.POST)
+        if form.is_valid() and extras.is_valid():
+            data = form.cleaned_data
+            matches = Patient.find_possible_duplicates(
+                data["first_name"], data["last_name"], data["date_of_birth"], data["phone"], data["id_number"]
             )
-        with transaction.atomic():
-            form.save()
-            form.save_cover(patient)
+            if matches and not extras.cleaned_data["confirm_new"]:
+                messages.warning(request, "Possible matches found. Check them before creating a new record.")
+            else:
+                patient = form.save()
+                if extras.cleaned_data["add_to_queue"]:
+                    Appointment.objects.create(
+                        patient=patient,
+                        clinic=extras.cleaned_data["clinic"] or "general",
+                        kind=Appointment.Kind.WALK_IN,
+                        created_by=request.user,
+                    )
+                messages.success(request, f"{patient.full_name} registered as {patient.hospital_number}.")
+                return redirect("patient_detail", pk=patient.pk)
+    else:
+        form = PatientForm()
+        extras = RegistrationExtras()
+    return render(request, "patients/form.html", {"form": form, "extras": extras, "matches": matches, "editing": False})
+
+
+@role_required(Role.RECEPTION)
+@require_http_methods(["GET", "POST"])
+def patient_edit(request, pk):
+    patient = get_object_or_404(Patient, pk=pk)
+    form = PatientForm(request.POST or None, instance=patient)
+    if request.method == "POST" and form.is_valid():
+        form.save()
         messages.success(request, "Patient details updated.")
-        return redirect(patient.get_absolute_url())
+        return redirect("patient_detail", pk=patient.pk)
+    return render(request, "patients/form.html", {"form": form, "patient": patient, "matches": [], "editing": True})
 
 
-def _doctors():
-    from apps.core.models import User
-
-    return User.objects.filter(role="doctor", is_active=True).order_by("first_name", "last_name")
+@role_required(*ALL_STAFF)
+def patient_detail(request, pk):
+    patient = get_object_or_404(Patient, pk=pk)
+    log_access(patient)
+    visits = list(patient.appointments.select_related("doctor", "triage", "consultation")[:20])
+    can_see_clinical = request.user.has_role(Role.NURSE, Role.DOCTOR, Role.DENTIST, Role.MIDWIFE)
+    if can_see_clinical:
+        # Opening a clinical record is itself audited.
+        for visit in visits:
+            for record in (getattr(visit, "triage", None), getattr(visit, "consultation", None)):
+                if record is not None:
+                    log_access(record)
+            for order in visit.orders.prefetch_related("items__results"):
+                for item in order.items.all():
+                    result = item.current_result
+                    if result is not None:
+                        log_access(result)
+    return render(
+        request,
+        "patients/detail.html",
+        {"patient": patient, "visits": visits, "can_see_clinical": can_see_clinical},
+    )
