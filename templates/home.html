@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="head"><div><div class="crumb">{% now "l j F Y" %}</div><h1>Dashboard</h1></div>
+{% if user.role == 'reception' or user.is_superuser or user.role == 'admin' %}<a class="btn primary" href="{% url 'patient_create' %}">Register new patient</a>{% endif %}</div>
+<div class="stats">
+  <div class="stat"><span>Patients registered</span><b>{{ patients_total }}</b></div>
+  <div class="stat"><span>Visits today</span><b>{{ today_total }}</b></div>
+  <div class="stat"><span>Waiting now</span><b>{{ waiting }}</b></div>
+  <div class="stat"><span>Seen today</span><b>{{ seen }}</b></div>
+</div>
+{% endblock %}
