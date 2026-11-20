@@ -1,9 +1,12 @@
-{% extends "base.html" %}{% block title %}Ward board{% endblock %}
-{% block content %}<div class="top"><div><h1>Ward board</h1><p class="sub">{{ occupied }} of {{ total }} beds occupied, {{ free }} free.</p></div></div>
-{% for w in wards %}<section class="card"><div style="display:flex;justify-content:space-between"><h2 style="margin:0">{{ w.ward.name }} <small class="muted">({{ w.ward.get_ward_type_display }})</small></h2><span class="muted">{{ w.occupied }} / {{ w.total }}</span></div>
-<div class="meter"><i style="width:{% widthratio w.occupied w.total 100 %}%"></i></div>
-<div class="beds">{% for b in w.beds %}<div class="bed {{ b.bed.status }}"><b>{{ b.bed.number }}</b>
-{% if b.adm %}{% if can_open %}<a href="{% url 'wards:admission' b.adm.pk %}">{{ b.adm.patient.full_name }}</a>{% else %}{{ b.adm.patient.full_name }}{% endif %}<br><small class="muted">Day {{ b.adm.days_in_ward }}</small>
-{% elif b.bed.status == 'cleaning' %}<small>Being cleaned</small>{% if can_release %}<form method="post" action="{% url 'wards:bed_ready' b.bed.pk %}" style="margin-top:4px">{% csrf_token %}<button class="btn sm">Ready</button></form>{% endif %}
-{% else %}<small class="muted">Free</small>{% endif %}</div>{% endfor %}</div></section>
-{% empty %}<div class="card">No wards set up yet. Add them in the admin.</div>{% endfor %}{% endblock %}
+{% extends "base.html" %}
+{% block title %}Ward board{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Inpatients</div><h1>Ward board</h1></div></div>
+<div class="stats"><div class="stat"><span>Free beds</span><b>{{ counts.free }}</b></div><div class="stat"><span>Occupied</span><b>{{ counts.occupied }}</b></div></div>
+{% for ward, beds in rows %}<section class="card"><h2>{{ ward.name }} <span class="sub">{{ ward.get_kind_display }}</span></h2><div class="beds">
+{% for bed, adm in beds %}<div class="bed {{ bed.status }}"><b>Bed {{ bed.number }}</b> <span class="badge {{ bed.status }}">{{ bed.get_status_display }}</span>
+{% if adm %}<div>{{ adm.patient.full_name }}</div><div class="sub" style="font-size:13px">{{ adm.number }}, since {{ adm.admitted_at|date:"j M" }}</div>
+{% if can_move %}<form method="post" action="{% url 'transfer' adm.pk %}" class="stack">{% csrf_token %}{{ transfer_form.bed }}<button class="btn small" type="submit">Transfer</button></form>{% endif %}
+{% endif %}</div>{% endfor %}</div></section>
+{% empty %}<section class="card">No wards set up yet. An administrator adds them under Administration.</section>{% endfor %}
+{% endblock %}

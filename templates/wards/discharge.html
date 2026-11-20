@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Discharge{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Ward board / {{ admission.number }}</div><h1>Discharge</h1><div class="sub">{{ admission.patient.full_name }}, {{ admission.bed }}. Admitted {{ admission.admitted_at|date:"j M H:i" }}: {{ admission.reason }}</div></div></div>
+<form method="post" class="card" style="max-width:640px">{% csrf_token %}{% include "_field.html" with field=form.summary %}
+<div class="row"><a class="btn" href="{% url 'visit_detail' admission.appointment_id %}">Cancel</a><button class="btn primary" type="submit">Discharge and free the bed</button></div></form>
+{% endblock %}
