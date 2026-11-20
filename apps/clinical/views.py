@@ -1,398 +1,185 @@
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Q
-from django.http import Http404
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
-from django.utils import timezone
-from django.views import View
+from django.views.decorators.http import require_POST
 
-from apps.appointments.models import QueueEntry, Stage, TransitionError
-from apps.core.audit import log_access, log_event
-from apps.core.permissions import RoleRequiredMixin
-from apps.patients.models import Patient
+from apps.accounts.models import CLINICIAN_ROLES, Role
+from apps.appointments.models import Appointment, Status, TransitionBlocked
+from apps.core.audit import log_access
+from apps.core.permissions import role_required
+from apps.imaging.forms import ImagingOrderForm
+from apps.imaging.models import ImagingStudy
+from apps.orders.forms import OrderForm
+from apps.pharmacy_rx.forms import PrescribeForm
+from apps.wards.forms import AdmitForm
 
-from .forms import (
-    AmendForm,
-    BreakGlassForm,
-    ConsultForm,
-    DiagnosisAddForm,
-    NoteForm,
-    TriageForm,
-    VitalsForm,
-)
-from .models import ClinicalNote, ICD10Code, Outcome, Visit, VisitDiagnosis
-from .workspace import (
-    CARE,
-    DOCTOR,
-    NURSE,
-    VisitPostView,
-    has_clinical_access,
-    render_visit,
-    safe_next,
-    workspace_context,
-)
+from .forms import DiagnosisForm, NoteForm, OutcomeForm, TriageForm
+from .icd10 import search_icd10
+from .models import Consultation
 
-HISTORY_ROLES = ("receptionist", "doctor", "nurse", "lab", "pharmacist", "cashier")
+# Visits in these states can still have notes, tests and prescriptions added by the doctor.
+EDITABLE = (Status.WITH_DOCTOR, Status.AWAITING_RESULTS, Status.ADMITTED)
 
 
-class TriageView(RoleRequiredMixin, View):
-    """Nurses record triage. Doctors and reception may open it read-only."""
+def _visit(pk):
+    return get_object_or_404(Appointment.objects.select_related("patient", "doctor"), pk=pk)
 
-    allowed_roles = ("nurse", "doctor", "receptionist")
 
-    def _page(self, request, entry, visit, form, readonly):
-        return render(
-            request,
-            "clinical/triage.html",
-            {
-                "entry": entry,
-                "patient": entry.patient,
-                "visit": visit,
-                "form": form,
-                "readonly": readonly,
-                "cover": entry.patient.covers.first(),
-                "last_visit": Visit.objects.filter(patient=entry.patient)
-                .exclude(pk=visit.pk)
-                .order_by("-started_at")
-                .first(),
-                "pain_range": range(0, 11),
-            },
-        )
-
-    def get(self, request, entry_pk):
-        entry = get_object_or_404(QueueEntry.objects.select_related("patient", "clinic"), pk=entry_pk)
-        is_nurse = request.user.has_role(*NURSE)
-        visit = Visit.for_queue_entry(entry) if is_nurse else Visit.objects.filter(queue_entry=entry).first()
-        if visit is None or (not is_nurse and not visit.triaged_at):
-            messages.info(request, "Triage has not been done for this patient yet.")
-            return redirect("queue")
-        if is_nurse and entry.stage not in (Stage.WAITING_TRIAGE, Stage.WAITING_DOCTOR):
-            messages.info(request, f"{entry.ticket} has already moved past triage.")
-            return redirect("queue")
-        log_access(visit)
-        initial = {"complaint": visit.complaint, "duration": visit.duration, "priority": visit.priority}
-        tv = visit.vitals.filter(context="triage").first()
-        if tv:
-            initial.update(VitalsForm.initial_from(tv))
-        return self._page(request, entry, visit, TriageForm(initial=initial), readonly=not is_nurse)
-
-    def post(self, request, entry_pk):
-        if not request.user.has_role(*NURSE):
+@role_required(Role.NURSE, Role.DOCTOR, Role.RECEPTION)
+def triage(request, pk):
+    visit = _visit(pk)
+    record = getattr(visit, "triage", None)
+    can_edit = request.user.has_role(Role.NURSE) and visit.status == Status.WAITING_TRIAGE
+    form = TriageForm(request.POST or None, instance=record)
+    if request.method == "POST":
+        if not can_edit:
             raise PermissionDenied
-        entry = get_object_or_404(QueueEntry.objects.select_related("patient", "clinic"), pk=entry_pk)
-        if entry.stage not in (Stage.WAITING_TRIAGE, Stage.WAITING_DOCTOR):
-            messages.info(request, f"{entry.ticket} has already moved past triage.")
-            return redirect("queue")
-        visit = Visit.for_queue_entry(entry)
-        form = TriageForm(request.POST)
-        if not form.is_valid():
-            return self._page(request, entry, visit, form, readonly=False)
-        with transaction.atomic():
-            tv = visit.vitals.filter(context="triage").first()
-            if tv:
-                vs = form.to_vitals(instance=tv)
-            else:
-                vs = form.to_vitals(visit=visit, recorded_by=request.user, context="triage")
-            d = form.cleaned_data
-            visit.complaint, visit.duration, visit.priority = d["complaint"], d["duration"], d["priority"]
-            visit.triaged_by, visit.triaged_at = request.user, timezone.now()
-            visit.save()
-            if entry.stage == Stage.WAITING_TRIAGE:
-                try:
-                    entry.apply("save_triage", request.user)
-                except TransitionError as e:
-                    messages.error(request, str(e))
-                    return redirect("queue")
-        if vs.is_critical and visit.priority == "routine":
-            messages.warning(request, "Critical readings recorded but priority is Routine. Consider Emergency.")
-        messages.success(request, f"{entry.patient.full_name} triaged and sent to the doctor.")
-        return redirect("queue")
-
-
-class CallInView(RoleRequiredMixin, View):
-    allowed_roles = DOCTOR
-    http_method_names = ["post"]
-
-    def post(self, request, entry_pk):
-        entry = get_object_or_404(QueueEntry, pk=entry_pk)
-        if entry.stage == Stage.WAITING_DOCTOR:
+        if form.is_valid():
             try:
-                entry.doctor = request.user
-                entry.apply("call_in", request.user, room=request.POST.get("room", "") or "1")
-            except TransitionError as e:
-                messages.error(request, str(e))
-                return redirect("queue")
-            visit = Visit.for_queue_entry(entry)
-            visit.doctor = request.user
-            visit.save()
-        elif entry.stage != Stage.WITH_DOCTOR:
-            messages.error(request, f"{entry.ticket} is not waiting for a doctor.")
-            return redirect("queue")
-        return redirect("clinical:consult", entry_pk=entry.pk)
+                with transaction.atomic():
+                    saved = form.save(commit=False)
+                    saved.appointment = visit
+                    saved.nurse = request.user
+                    saved.save()
+                    visit.refresh_from_db()
+                    visit.move_to(Status.WAITING_DOCTOR, request.user)
+            except TransitionBlocked as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, f"{visit.patient.full_name} sent to the doctor.")
+                return redirect("appointment_list")
+    if record:
+        log_access(record)
+    return render(
+        request, "clinical/triage.html", {"visit": visit, "form": form, "record": record, "can_edit": can_edit}
+    )
 
 
-class ConsultView(RoleRequiredMixin, View):
-    """Doctors write the consultation. Nurses may open it read-only."""
+def _doctor_consultation(request, pk):
+    """The visit and its consultation for a doctor who may change them, else 403."""
+    if not request.user.has_role(*CLINICIAN_ROLES):
+        raise PermissionDenied
+    visit = _visit(pk)
+    _clinic_guard(request.user, visit)
+    if visit.status not in EDITABLE:
+        raise PermissionDenied
+    consultation, _ = Consultation.objects.get_or_create(appointment=visit, defaults={"doctor": request.user})
+    return visit, consultation
 
-    allowed_roles = ("doctor", "nurse")
 
-    def get(self, request, entry_pk):
-        entry = get_object_or_404(QueueEntry.objects.select_related("patient"), pk=entry_pk)
-        if entry.stage in (Stage.WAITING_TRIAGE, Stage.WAITING_DOCTOR):
-            messages.info(request, "Call the patient in from the queue first.")
-            return redirect("queue")
-        visit = Visit.for_queue_entry(entry)
-        if visit.is_open and visit.doctor_id is None and request.user.has_role(*DOCTOR):
-            visit.doctor = request.user
-            visit.save()
-        log_access(visit)
-        form = ConsultForm(
-            initial={
-                "history": getattr(visit.current_note("history"), "text", ""),
-                "examination": getattr(visit.current_note("examination"), "text", ""),
-                "plan": getattr(visit.current_note("plan"), "text", ""),
-                "outcome": visit.outcome,
-                "review_in_days": visit.review_in_days,
-                "referred_to": visit.referred_to,
-            }
+def _clinic_ok(user, visit):
+    """Dentists work dental visits and midwives work maternal and child health visits; doctors any visit."""
+    if user.has_role(Role.DOCTOR):
+        return True
+    if user.role == Role.DENTIST:
+        return visit.clinic == "dental"
+    if user.role == Role.MIDWIFE:
+        return visit.clinic == "mch"
+    return False
+
+
+def _clinic_guard(user, visit):
+    if not _clinic_ok(user, visit):
+        raise PermissionDenied
+
+
+@role_required(Role.NURSE, *CLINICIAN_ROLES)
+def visit_detail(request, pk):
+    visit = _visit(pk)
+    is_doctor = _clinic_ok(request.user, visit)
+    if request.user.role in (Role.DENTIST, Role.MIDWIFE) and not is_doctor:
+        raise PermissionDenied  # dentists and midwives open only their own clinic's visits
+    consultation = getattr(visit, "consultation", None)
+    if consultation is None and is_doctor and visit.status in EDITABLE:
+        consultation = Consultation.objects.create(appointment=visit, doctor=request.user)
+    can_edit = is_doctor and visit.status in EDITABLE
+    ctx = {
+        "visit": visit,
+        "patient": visit.patient,
+        "triage": getattr(visit, "triage", None),
+        "consultation": consultation,
+        "can_edit": can_edit,
+        "moves": [s for s in visit.allowed_next(request.user) if s != Status.ADMITTED],
+    }
+    if consultation:
+        log_access(consultation)
+        ctx.update(
+            notes=consultation.notes.all(),
+            diagnoses=consultation.diagnoses.all(),
+            prescriptions=consultation.prescriptions.prefetch_related("items__drug"),
         )
-        return render_visit(request, visit, consult_form=form)
-
-    def post(self, request, entry_pk):
-        if not request.user.has_role(*DOCTOR):
-            raise PermissionDenied
-        entry = get_object_or_404(QueueEntry.objects.select_related("patient"), pk=entry_pk)
-        visit = Visit.for_queue_entry(entry)
-        if not visit.is_open:
-            messages.error(request, "This consultation is closed.")
-            return redirect("queue")
-        form = ConsultForm(request.POST)
-        if not form.is_valid():
-            return render_visit(request, visit, consult_form=form)
-        d = form.cleaned_data
-        with transaction.atomic():
-            for kind in ("history", "examination", "plan"):
-                text = d[kind].strip()
-                current = visit.current_note(kind)
-                if text and (not current or current.text != text):
-                    if current:
-                        current.amend(text, request.user, "Updated during consultation")
-                    else:
-                        ClinicalNote.objects.create(visit=visit, kind=kind, text=text, author=request.user)
-            visit.outcome = d["outcome"] or ""
-            visit.review_in_days = d["review_in_days"]
-            visit.referred_to = d["referred_to"]
-            visit.save()
-
-        if request.POST.get("action") != "finish":
-            messages.success(request, "Draft saved.")
-            return redirect("clinical:consult", entry_pk=entry.pk)
-        if visit.outcome == Outcome.ADMIT:
-            return redirect("wards:admit_visit", visit_pk=visit.pk)  # choose the ward and bed next
-        try:
-            entry.apply("complete", request.user)
-        except TransitionError as e:
-            messages.error(request, str(e))
-            return redirect("clinical:consult", entry_pk=entry.pk)
-        visit.finished_at = timezone.now()
-        visit.save()
-        visit.close()
-        if visit.orders.filter(status__in=["ordered", "in_progress"]).exists():
-            messages.warning(request, "Some tests are still pending. Results will appear on the visit record.")
-        messages.success(
-            request, f"Consultation for {entry.patient.full_name} finished. Prescriptions go to the pharmacy."
+    ctx["orders"] = visit.orders.prefetch_related("items__test", "items__results", "items__study")
+    ctx["studies"] = ImagingStudy.objects.filter(order_item__order__appointment=visit).select_related(
+        "item__test", "item__modality"
+    )
+    if can_edit:
+        note = consultation.current_note
+        ctx.update(
+            note_form=NoteForm(initial={f: getattr(note, f) for f in NoteForm.Meta.fields} if note else None),
+            diagnosis_form=DiagnosisForm(),
+            outcome_form=OutcomeForm(instance=consultation),
+            order_form=OrderForm(),
+            imaging_form=ImagingOrderForm(patient=visit.patient),
+            rx_form=PrescribeForm(patient=visit.patient),
         )
-        return redirect("queue")
+        ctx["admit_form"] = AdmitForm()
+    admission = getattr(visit, "admission", None)
+    ctx["admission"] = admission
+    if admission:
+        log_access(admission)
+    return render(request, "clinical/visit.html", ctx)
 
 
-class IcdSearchView(RoleRequiredMixin, View):
-    allowed_roles = DOCTOR
-
-    def get(self, request, pk):
-        visit = get_object_or_404(Visit, pk=pk)
-        q = request.GET.get("q", "").strip()
-        results = []
-        if len(q) >= 2:
-            results = ICD10Code.objects.filter(Q(code__istartswith=q) | Q(title__icontains=q)).order_by("code")[:8]
-        return render(
-            request,
-            "clinical/_icd_results.html",
-            {"results": results, "visit": visit, "q": q, "next": request.GET.get("next", "")},
-        )
+def _back(visit):
+    return redirect("visit_detail", pk=visit.pk)
 
 
-class DiagnosisAddView(VisitPostView):
-    def act(self, request):
-        form = DiagnosisAddForm(request.POST)
-        if form.is_valid():
-            code = get_object_or_404(ICD10Code, pk=form.cleaned_data["icd10"])
-            VisitDiagnosis.objects.get_or_create(
-                visit=self.visit,
-                icd10=code,
-                defaults={"kind": form.cleaned_data["kind"] or "provisional", "added_by": request.user},
-            )
-        return redirect(self.back)
+@role_required(*CLINICIAN_ROLES)
+@require_POST
+def note_save(request, pk):
+    visit, consultation = _doctor_consultation(request, pk)
+    form = NoteForm(request.POST)
+    if form.is_valid():
+        note = form.save(commit=False)
+        note.consultation = consultation
+        note.author = request.user
+        note.save()
+        messages.success(request, f"Note saved as version {note.version}.")
+    else:
+        messages.error(request, " ".join(e for errs in form.errors.values() for e in errs))
+    return _back(visit)
 
 
-class DiagnosisActionView(VisitPostView):
-    def act(self, request, diag_pk, action):
-        diag = get_object_or_404(VisitDiagnosis, pk=diag_pk, visit=self.visit)
-        if action == "remove":
-            diag.delete()
-        elif action == "confirm":
-            diag.kind = "confirmed"
-            diag.save()
-        else:
-            raise Http404
-        return redirect(self.back)
+@role_required(*CLINICIAN_ROLES)
+@require_POST
+def diagnosis_add(request, pk):
+    visit, consultation = _doctor_consultation(request, pk)
+    form = DiagnosisForm(request.POST)
+    if form.is_valid():
+        diagnosis = form.save(commit=False)
+        diagnosis.consultation = consultation
+        diagnosis.save()
+        messages.success(request, "Diagnosis saved.")
+    else:
+        messages.error(request, "Enter a diagnosis name.")
+    return _back(visit)
 
 
-class ProgressNoteView(VisitPostView):
-    allowed_roles = CARE
-
-    def act(self, request):
-        form = NoteForm(request.POST)
-        if form.is_valid():
-            ClinicalNote.objects.create(
-                visit=self.visit, kind="progress", text=form.cleaned_data["text"].strip(), author=request.user
-            )
-        else:
-            messages.error(request, "Write the note before saving.")
-        return redirect(self.back)
-
-
-class NoteAmendView(VisitPostView):
-    allowed_roles = CARE
-
-    def act(self, request, note_pk):
-        note = get_object_or_404(ClinicalNote, pk=note_pk, visit=self.visit)
-        if note.amended_by.exists():
-            messages.error(request, "That note has already been amended. Amend the latest version.")
-            return redirect(self.back)
-        form = AmendForm(request.POST)
-        if form.is_valid():
-            note.amend(form.cleaned_data["text"].strip(), request.user, form.cleaned_data["reason"])
-            messages.success(request, "Note amended. The earlier version is kept in the record.")
-        else:
-            messages.error(request, "An amendment needs the corrected text and a reason.")
-        return redirect(self.back)
+@role_required(*CLINICIAN_ROLES)
+@require_POST
+def outcome_save(request, pk):
+    visit, consultation = _doctor_consultation(request, pk)
+    form = OutcomeForm(request.POST, instance=consultation)
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Outcome saved.")
+    else:
+        messages.error(request, " ".join(e for errs in form.errors.values() for e in errs))
+    return _back(visit)
 
 
-class VitalsAddView(VisitPostView):
-    allowed_roles = CARE
-
-    def act(self, request):
-        form = VitalsForm(request.POST)
-        if not form.is_valid():
-            return self.invalid(request, vitals_form=form)
-        form.to_vitals(visit=self.visit, recorded_by=request.user, context="ward")
-        messages.success(request, "Observations recorded.")
-        return redirect(self.back)
-
-
-class SendToLabView(VisitPostView):
-    def act(self, request):
-        entry = self.visit.queue_entry
-        if entry is None:
-            messages.error(request, "This visit is not in the outpatient queue.")
-        elif self.step(request, entry, "send_to_lab"):
-            messages.success(request, "Patient sent to the lab. They return to you when results are in.")
-        return redirect(self.back)
-
-
-class ReferralLetterView(RoleRequiredMixin, View):
-    """Printed referral letter for a visit whose outcome is 'refer'."""
-
-    allowed_roles = ("doctor", "nurse")
-
-    def get(self, request, pk):
-        visit = get_object_or_404(Visit.objects.select_related("patient", "doctor"), pk=pk)
-        if visit.outcome != Outcome.REFER or not visit.referred_to.strip():
-            messages.error(request, "Choose 'Refer to another facility' and name the facility first.")
-            return redirect(
-                visit.queue_entry_id and reverse("clinical:consult", args=[visit.queue_entry_id]) or "queue"
-            )
-        log_event("print", visit, reason="Referral letter")
-        orders = list(visit.orders.exclude(status="cancelled").select_related("test"))
-        for o in orders:
-            o.result = o.current_result
-        return render(
-            request,
-            "clinical/referral.html",
-            {
-                "visit": visit,
-                "patient": visit.patient,
-                "diagnoses": visit.diagnoses.select_related("icd10"),
-                "orders": orders,
-                "prescriptions": visit.prescriptions.exclude(status="cancelled").select_related("drug"),
-                "history_note": visit.current_note("history"),
-                "exam_note": visit.current_note("examination"),
-                "latest": visit.latest_vitals,
-            },
-        )
-
-
-class PatientHistoryView(RoleRequiredMixin, View):
-    """The patient timeline. Care staff open it directly; others need a logged break-glass override."""
-
-    allowed_roles = HISTORY_ROLES
-
-    def get(self, request, pk):
-        patient = get_object_or_404(Patient, pk=pk)
-        if not has_clinical_access(request, patient):
-            return render(
-                request,
-                "clinical/break_glass.html",
-                {"patient": patient, "form": BreakGlassForm(), "next": request.get_full_path()},
-                status=403,
-            )
-        log_access(patient, reason="Clinical history")
-        visits = list(
-            patient.visits.prefetch_related(
-                "diagnoses__icd10", "orders__test", "orders__results", "prescriptions__drug"
-            )
-            .select_related("doctor")
-            .order_by("-started_at")
-        )
-        for v in visits:
-            for o in v.orders.all():
-                o.result = o.current_result
-        return render(request, "clinical/history.html", {"patient": patient, "visits": visits})
-
-
-class BreakGlassView(RoleRequiredMixin, View):
-    allowed_roles = HISTORY_ROLES
-    http_method_names = ["post"]
-
-    def post(self, request, pk):
-        patient = get_object_or_404(Patient, pk=pk)
-        form = BreakGlassForm(request.POST)
-        back = safe_next(request, reverse("clinical:history", args=[patient.pk]))
-        if not form.is_valid():
-            return render(
-                request, "clinical/break_glass.html", {"patient": patient, "form": form, "next": back}, status=403
-            )
-        log_event("break_glass", patient, reason=form.cleaned_data["reason"], needs_review=True)
-        grants = request.session.get("break_glass", {})
-        grants[str(patient.pk)] = timezone.now().timestamp()
-        request.session["break_glass"] = grants
-        messages.warning(request, "Emergency access granted for 30 minutes. It has been logged and will be reviewed.")
-        return redirect(back)
-
-
-class VisitDetailView(RoleRequiredMixin, View):
-    allowed_roles = HISTORY_ROLES
-
-    def get(self, request, pk):
-        visit = get_object_or_404(Visit.objects.select_related("patient"), pk=pk)
-        if not has_clinical_access(request, visit.patient):
-            return render(
-                request,
-                "clinical/break_glass.html",
-                {"patient": visit.patient, "form": BreakGlassForm(), "next": request.get_full_path()},
-                status=403,
-            )
-        log_access(visit)
-        return render(request, "clinical/visit_detail.html", workspace_context(request, visit))
+@role_required(Role.NURSE, *CLINICIAN_ROLES)
+def icd10_lookup(request):
+    return JsonResponse({"results": [{"code": c, "name": n} for c, n in search_icd10(request.GET.get("q"))]})
