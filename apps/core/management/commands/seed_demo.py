@@ -1,40 +1,26 @@
-"""Create starter clinics, departments and one demo user per role (development only)."""
+"""Create one sign-in per role so each screen can be tried out. Development only."""
 
-import os
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 
-from django.core.management.base import BaseCommand
-
-from apps.appointments.models import Clinic
-from apps.core.models import Department, Role, User
-
-DEPARTMENTS = ["Reception", "Outpatient", "Maternal and child health", "Laboratory", "Pharmacy", "Billing"]
-CLINICS = ["General outpatient", "Maternal and child health"]
-USERS = [
-    ("admin1", Role.ADMIN),
-    ("reception1", Role.RECEPTIONIST),
-    ("doctor1", Role.DOCTOR),
-    ("nurse1", Role.NURSE),
-    ("lab1", Role.LAB),
-    ("pharmacy1", Role.PHARMACIST),
-    ("cashier1", Role.CASHIER),
-]
+from apps.accounts.models import Role, User
 
 
 class Command(BaseCommand):
-    def add_arguments(self, parser):
-        parser.add_argument("--password", default=os.environ.get("DEMO_PASSWORD", "ChangeMe-12345"))
+    help = "Create a demo user for every role (development only)."
 
-    def handle(self, *args, **opts):
-        for name in DEPARTMENTS:
-            Department.objects.get_or_create(code=name.lower().replace(" ", "-"), defaults={"name": name})
-        for name in CLINICS:
-            Clinic.objects.get_or_create(name=name)
-        for username, role in USERS:
+    def add_arguments(self, parser):
+        parser.add_argument("--password", default="demo-password-123")
+
+    def handle(self, *args, **options):
+        if not settings.DEBUG:
+            raise CommandError("seed_demo only runs when DJANGO_DEBUG is on.")
+        for role in Role:
             user, created = User.objects.get_or_create(
-                username=username,
-                defaults={"role": role, "first_name": username.rstrip("1").title(), "is_staff": role == Role.ADMIN},
+                username=role.value,
+                defaults={"role": role.value, "first_name": role.label, "is_staff": role == Role.ADMIN},
             )
             if created:
-                user.set_password(opts["password"])
+                user.set_password(options["password"])
                 user.save()
-        self.stdout.write(self.style.SUCCESS("Seeded departments, clinics and demo users."))
+            self.stdout.write(f"{'created' if created else 'exists '} {user.username} ({role.label})")
