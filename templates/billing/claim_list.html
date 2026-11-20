@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Claims{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Billing</div><h1>Insurer and SHA claims</h1></div></div>
+<form method="get" class="row">{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn" type="submit">Show</button></form>
+{% if form.month.value %}<div class="row"><a class="btn primary" href="{% url 'claim_export' %}?month={{ form.month.value }}">Export {{ form.month.value }} as one file</a><span class="sub">Draft claims in the file become submitted.</span></div>{% endif %}
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:720px"><thead><tr><th style="padding-left:20px">Claim</th><th>Patient</th><th>Payer</th><th>Month</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
+{% for c in claims %}<tr><td style="padding-left:20px"><a href="{% url 'claim_detail' c.pk %}">{{ c.number }}</a></td><td>{{ c.invoice.patient.full_name }}</td><td>{{ c.get_payer_kind_display }} {{ c.payer_name }}</td><td>{{ c.batch }}</td><td class="num">{{ c.amount_claimed }}</td><td><span class="badge {{ c.status }}">{{ c.get_status_display }}</span></td></tr>
+{% empty %}<tr><td colspan="6" style="padding:24px 20px">No claims. Make one from a finalised invoice.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

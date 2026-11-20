@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Invoice {{ invoice }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'invoice_list' %}">Invoices</a></div><h1>{{ invoice.number|default:"Draft invoice" }} <span class="badge {{ invoice.status }}">{{ invoice.get_status_display }}</span></h1>
+<p class="sub">{{ invoice.patient.full_name }}, {{ invoice.patient.hospital_number }}. Payer: {{ invoice.get_payer_kind_display }}{% if invoice.payer_name %} ({{ invoice.payer_name }}){% endif %}{% if invoice.member_number %}, member {{ invoice.member_number }}{% endif %}</p></div>
+<div class="row"><a class="btn" href="{% url 'invoice_print' invoice.pk %}" target="_blank">Print</a></div></div>
+{% for a in alerts %}<div class="alert error" role="alert">{{ a.message }}<form method="post" action="{% url 'alert_resolve' a.pk %}" class="inline">{% csrf_token %} <button class="btn small" type="submit">Done</button></form></div>{% endfor %}
+{% if invoice.status == 'void' %}<div class="alert error">Voided: {{ invoice.void_reason }} ({{ invoice.voided_by }}, {{ invoice.voided_at|date:"j M Y H:i" }})</div>{% endif %}
+<div class="cols"><div class="wide">
+<section class="card"><h2>Charges</h2><div class="scroll"><table style="min-width:560px"><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th><th></th></tr></thead><tbody>
+{% for l in lines %}<tr><td>{{ l.description }}</td><td class="num">{{ l.quantity }}</td><td class="num">{{ l.unit_price }}</td><td class="num">{{ l.amount }}</td>
+<td class="num">{% if invoice.status == 'draft' %}<form method="post" action="{% url 'invoice_remove_line' invoice.pk %}">{% csrf_token %}<input type="hidden" name="line" value="{{ l.pk }}"><button class="btn small" type="submit">Remove</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="5">No charges yet.</td></tr>{% endfor %}</tbody></table></div>
+{% if removed %}<p class="sub">Removed before finalising: {% for l in removed %}{{ l.description }} ({{ l.removal_reason }}){% if not forloop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+<div class="totals"><span>Total</span><b>{{ invoice.total }}</b>{% if invoice.status != 'draft' %}<span>Paid</span><b>{{ invoice.paid }}</b><span>Balance</span><b>{{ invoice.balance }}</b>{% endif %}</div>
+{% if invoice.status == 'draft' %}
+<form method="post" action="{% url 'invoice_add_line' invoice.pk %}" class="row">{% csrf_token %}{% include "_field.html" with field=add_form.service %}{% include "_field.html" with field=add_form.quantity %}<button class="btn" type="submit">Add charge</button></form>
+<form method="post" action="{% url 'invoice_finalise' invoice.pk %}">{% csrf_token %}<button class="btn primary" type="submit">Finalise invoice</button></form>
+{% endif %}</section>
+{% if payments %}<section class="card"><h2>Payments and receipts</h2><table><thead><tr><th>Receipt</th><th>Method</th><th class="num">Amount</th><th>By</th><th>When</th></tr></thead><tbody>
+{% for p in payments %}<tr><td>{{ p.receipt_number }}</td><td>{{ p.get_method_display }}{% if p.mpesa_code %} {{ p.mpesa_code }}{% endif %}{% if p.reason %}<div class="sub" style="font-size:13px">{{ p.reason }}</div>{% endif %}</td><td class="num">{{ p.amount }}</td><td>{{ p.received_by }}</td><td>{{ p.created_at|date:"j M H:i" }}</td></tr>{% endfor %}</tbody></table></section>{% endif %}
+</div><div class="narrow">
+{% if invoice.status == 'open' or invoice.status == 'part_paid' %}<section class="card"><h2>Take payment</h2>
+<form method="post" action="{% url 'invoice_pay' invoice.pk %}" class="stack">{% csrf_token %}{% include "_field.html" with field=pay_form.method %}{% include "_field.html" with field=pay_form.amount %}{% include "_field.html" with field=pay_form.mpesa_code %}{% include "_field.html" with field=pay_form.reference %}<button class="btn primary" type="submit">Record payment</button></form></section>{% endif %}
+{% if invoice.status != 'draft' and invoice.status != 'void' and invoice.payer_kind != 'cash' and not invoice.claim %}<section class="card"><form method="post" action="{% url 'invoice_claim' invoice.pk %}">{% csrf_token %}<button class="btn" type="submit">Make a claim</button></form></section>{% endif %}
+{% if invoice.claim %}<section class="card"><a href="{% url 'claim_detail' invoice.claim.pk %}">Claim {{ invoice.claim.number }}</a> <span class="badge {{ invoice.claim.status }}">{{ invoice.claim.get_status_display }}</span></section>{% endif %}
+{% if can_manage and invoice.status != 'draft' and invoice.status != 'void' %}
+<section class="card"><h2>Administrator</h2>
+{% if invoice.paid > 0 %}<form method="post" action="{% url 'invoice_refund' invoice.pk %}" class="stack">{% csrf_token %}<b>Refund</b>{% include "_field.html" with field=refund_form.amount %}{% include "_field.html" with field=refund_form.method %}{% include "_field.html" with field=refund_form.reason %}<button class="btn" type="submit">Record refund</button></form>{% endif %}
+<form method="post" action="{% url 'invoice_void' invoice.pk %}" class="stack">{% csrf_token %}<b>Void invoice</b>{% include "_field.html" with field=void_form.reason %}<button class="btn" type="submit">Void</button></form></section>{% endif %}
+</div></div>
+{% endblock %}

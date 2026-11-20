@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Cash-up{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Billing</div><h1>Cash-up</h1></div></div>
+<section class="card"><h2>Today, {{ today|date:"j M Y" }}</h2>
+{% if mine %}<p>Closed. Difference: <b>{{ mine.difference }}</b>. {{ mine.explanation }}</p>
+{% else %}<p class="sub">The system expects: {% for m, a in expected.items %}{{ m }} {{ a }}{% if not forloop.last %}, {% endif %}{% endfor %}. Count what you hold and type it in. Once you close the day you cannot take more payments today.</p>
+<form method="post" class="stack">{% csrf_token %}<div class="grid2">{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}</div><div><button class="btn primary" type="submit">Close my day</button></div></form>{% endif %}</section>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:640px"><thead><tr><th style="padding-left:20px">Day</th><th>Cashier</th><th>Expected</th><th>Counted</th><th class="num">Difference</th></tr></thead><tbody>
+{% for c in history %}<tr><td style="padding-left:20px">{{ c.day|date:"j M Y" }}</td><td>{{ c.cashier }}</td><td>{% for m, a in c.expected.items %}{{ m }} {{ a }}; {% endfor %}</td><td>{% for m, a in c.counted.items %}{{ m }} {{ a }}; {% endfor %}</td><td class="num">{{ c.difference }}</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

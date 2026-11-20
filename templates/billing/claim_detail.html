@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Claim {{ claim }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'claim_list' %}">Claims</a></div><h1>{{ claim.number }} <span class="badge {{ claim.status }}">{{ claim.get_status_display }}</span></h1>
+<p class="sub">{{ claim.invoice.patient.full_name }}. Invoice <a href="{% url 'invoice_detail' claim.invoice.pk %}">{{ claim.invoice }}</a>. {{ claim.get_payer_kind_display }} {{ claim.payer_name }}, member {{ claim.member_number|default:"not recorded" }}</p></div></div>
+{% if claim.status == 'rejected' %}<div class="alert error">Rejected: {{ claim.rejection_reason }}</div>{% endif %}
+<div class="cols"><div class="wide"><section class="card"><p>Diagnoses: {{ claim.diagnoses|default:"none recorded" }}. Resubmitted {{ claim.resubmissions }} time(s).</p>
+<table><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead><tbody>{% for l in lines %}<tr><td>{{ l.description }}</td><td class="num">{{ l.quantity }}</td><td class="num">{{ l.unit_price }}</td><td class="num">{{ l.amount }}</td></tr>{% endfor %}</tbody></table>
+<div class="totals"><span>Claimed</span><b>{{ claim.amount_claimed }}</b>{% if claim.amount_approved is not None %}<span>Approved</span><b>{{ claim.amount_approved }}</b>{% endif %}</div></section></div>
+<div class="narrow">
+{% if claim.status == 'submitted' %}<section class="card"><h2>Payer's answer</h2>
+<form method="post" action="{% url 'claim_action' claim.pk 'approve' %}" class="stack">{% csrf_token %}{% include "_field.html" with field=amount_form.amount %}<button class="btn" type="submit">Approved</button></form>
+<form method="post" action="{% url 'claim_action' claim.pk 'reject' %}" class="stack">{% csrf_token %}{% include "_field.html" with field=reject_form.reason %}<button class="btn" type="submit">Rejected</button></form></section>{% endif %}
+{% if claim.status == 'approved' or claim.status == 'submitted' %}<section class="card"><h2>Payer has paid</h2><form method="post" action="{% url 'claim_action' claim.pk 'paid' %}" class="stack">{% csrf_token %}{% include "_field.html" with field=amount_form.amount %}{% include "_field.html" with field=amount_form.reference %}<button class="btn primary" type="submit">Record payment</button></form></section>{% endif %}
+{% if claim.status == 'rejected' %}<section class="card"><h2>Correct and resubmit</h2><form method="post" action="{% url 'claim_action' claim.pk 'correct' %}" class="stack">{% csrf_token %}{% include "_field.html" with field=correct_form.member_number %}{% include "_field.html" with field=correct_form.diagnoses %}<button class="btn primary" type="submit">Return to draft</button></form><p class="sub">It goes out again in the next export for {{ claim.batch }}.</p></section>{% endif %}
+</div></div>
+{% endblock %}

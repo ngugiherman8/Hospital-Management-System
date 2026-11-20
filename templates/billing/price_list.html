@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Price list{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Billing</div><h1>Price list</h1><p class="sub">Only an administrator can change prices, in Administration. A payer with no price of its own pays the self-pay price.</p></div></div>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:640px"><thead><tr><th style="padding-left:20px">Service</th><th>Type</th><th>Prices (KES)</th></tr></thead><tbody>
+{% for i in items %}<tr><td style="padding-left:20px">{{ i.name }}<div class="sub" style="font-size:13px">{{ i.code }}</div></td><td>{{ i.get_category_display }}</td><td>{% for p in i.prices.all %}{{ p.get_payer_kind_display }}: {{ p.amount }}{% if not forloop.last %}; {% endif %}{% empty %}<span class="badge flag">No price</span>{% endfor %}</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

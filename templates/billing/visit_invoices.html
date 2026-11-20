@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Invoices for this visit{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Billing</div><h1>Invoices for {{ visit.patient.full_name }}</h1><p class="sub">Visit on {{ visit.visit_date|date:"j M Y" }}</p></div></div>
+<section class="card"><ul>{% for i in invoices %}<li><a href="{% url 'invoice_detail' i.pk %}">{{ i.number|default:"Draft invoice" }}</a> <span class="badge {{ i.status }}">{{ i.get_status_display }}</span> total {{ i.total }}</li>{% endfor %}</ul></section>
+{% endblock %}

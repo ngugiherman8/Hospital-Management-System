@@ -1,0 +1,8 @@
+{% load static %}<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{{ invoice.number|default:"Draft" }}</title><link rel="stylesheet" href="{% static 'css/app.css' %}"></head>
+<body onload="window.print()"><main class="main">
+<h1>{{ HOSPITAL_NAME }}</h1><h2>{% if invoice.status == 'draft' %}Draft invoice (not final){% else %}Invoice {{ invoice.number }}{% endif %}{% if invoice.status == 'void' %} VOID{% endif %}</h2>
+<p>{{ invoice.patient.full_name }}, {{ invoice.patient.hospital_number }}<br>Payer: {{ invoice.get_payer_kind_display }} {{ invoice.payer_name }} {{ invoice.member_number }}<br>Date: {{ invoice.finalised_at|default:invoice.created_at|date:"j M Y H:i" }}</p>
+<table><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead><tbody>{% for l in lines %}<tr><td>{{ l.description }}</td><td class="num">{{ l.quantity }}</td><td class="num">{{ l.unit_price }}</td><td class="num">{{ l.amount }}</td></tr>{% endfor %}</tbody></table>
+<div class="totals"><span>Total (KES)</span><b>{{ invoice.total }}</b>{% if invoice.status != 'draft' %}<span>Paid</span><b>{{ invoice.paid }}</b><span>Balance</span><b>{{ invoice.balance }}</b>{% endif %}</div>
+{% for p in payments %}<p class="sub">Receipt {{ p.receipt_number }}: {{ p.get_method_display }} {{ p.amount }}, {{ p.created_at|date:"j M Y H:i" }}</p>{% endfor %}
+</main></body></html>

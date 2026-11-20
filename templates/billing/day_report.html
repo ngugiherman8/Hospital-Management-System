@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Day report{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Billing</div><h1>Day report, {{ day|date:"j M Y" }}</h1></div>
+<form method="get" class="row"><label class="field">Day<input type="date" name="day" value="{{ day|date:'Y-m-d' }}"></label><button class="btn" type="submit">Show</button></form></div>
+<section class="card"><h2>Money</h2>
+<div class="totals"><span>Invoices finalised</span><b>{{ r.invoices }}</b><span>Billed</span><b>{{ r.billed }}</b>{% for m, a in r.by_method.items %}<span>{{ m }}</span><b>{{ a }}</b>{% endfor %}<span>Received</span><b>{{ r.received }}</b><span>Refunded</span><b>{{ r.refunded }}</b><span>Net</span><b>{{ r.net }}</b><span>Cash-up differences</span><b>{{ r.difference_total }}</b></div>
+<p>Ledger adds up: <span class="badge {% if r.ledger_ok %}ok{% else %}out{% endif %}">{% if r.ledger_ok %}Yes{% else %}No{% endif %}</span></p>
+{% if r.unclosed_cashiers %}<div class="alert error">Cashiers who took payments but have not closed the day: {{ r.unclosed_cashiers|join:", " }} (user ids).</div>{% endif %}
+{% if r.unexplained %}<div class="alert error">{{ r.unexplained|length }} cash-up(s) have a difference with no explanation.</div>{% endif %}</section>
+<section class="card"><h2>Stock movements</h2><table><thead><tr><th>Drug</th><th class="num">Opening</th><th class="num">Received</th><th class="num">Dispensed</th><th class="num">Adjusted</th><th class="num">Written off</th><th class="num">Returned</th><th class="num">Closing</th><th></th></tr></thead><tbody>
+{% for s in stock %}<tr><td>{{ s.drug }}</td><td class="num">{{ s.opening }}</td><td class="num">{{ s.receive }}</td><td class="num">{{ s.dispense }}</td><td class="num">{{ s.adjust }}</td><td class="num">{{ s.expired }}</td><td class="num">{{ s.return }}</td><td class="num">{{ s.closing }}</td><td><span class="badge {% if s.ok %}ok{% else %}out{% endif %}">{% if s.ok %}OK{% else %}Check{% endif %}</span></td></tr>{% empty %}<tr><td colspan="9">No stock moved on this day.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}
