@@ -1,1 +1,11 @@
-
+{% extends "base.html" %}
+{% block title %}Due and missed contacts{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Maternal and child health</div><h1>Due and missed contacts</h1></div></div>
+<section class="card"><h2>Antenatal</h2><table><thead><tr><th>Woman</th><th>Contact</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>
+{% for e, row, due, status in antenatal %}<tr><td><b>{{ e.patient.full_name }}</b></td><td>{{ row.contact_number }} ({{ row.due_at }} weeks)</td><td>{{ due|date:"j M Y" }}</td><td><span class="badge {% if status == 'missed' %}flag{% else %}urgent{% endif %}">{{ status|capfirst }}</span></td><td><a href="{% url 'pregnancy_detail' e.pk %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="5" class="sub">Nothing due or missed.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Postnatal</h2><table><thead><tr><th>Who</th><th>Contact</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>
+{% for delivery, who, person, row, due, status in postnatal %}<tr><td><b>{{ person.full_name }}</b> <span class="sub">({{ who }})</span></td><td>{{ row.contact_number }} (day {{ row.due_at }})</td><td>{{ due|date:"j M Y" }}</td><td><span class="badge {% if status == 'missed' %}flag{% else %}urgent{% endif %}">{{ status|capfirst }}</span></td><td><a href="{% url 'pregnancy_detail' delivery.episode_id %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="5" class="sub">Nothing due or missed.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

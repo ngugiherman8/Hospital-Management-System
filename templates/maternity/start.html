@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Open pregnancy{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Patients / {{ patient.hospital_number }}</div><h1>Open a pregnancy</h1><div class="sub">{{ patient.full_name }}, {{ patient.age }} years</div></div></div>
+<form method="post" class="card" style="max-width:640px">{% csrf_token %}
+{% if form.non_field_errors %}<div class="alert error">{{ form.non_field_errors }}</div>{% endif %}
+<div class="grid2">{% include "_field.html" with field=form.lmp %}{% include "_field.html" with field=form.edd %}{% include "_field.html" with field=form.previous_pregnancies %}{% include "_field.html" with field=form.previous_births %}{% include "_field.html" with field=form.blood_group %}</div>
+{% include "_field.html" with field=form.risk_factors %}
+<div class="row"><a class="btn" href="{% url 'patient_detail' patient.pk %}">Cancel</a><button class="btn primary" type="submit">Open pregnancy</button></div></form>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Pregnancy: {{ patient.full_name }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pregnancies / {{ patient.hospital_number }}</div><h1>{{ patient.full_name }}</h1>
+<div class="sub">{{ patient.age }} years. <span class="badge {% if episode.is_active %}routine{% else %}cleaning{% endif %}">{{ episode.get_status_display }}</span></div></div>
+<a class="btn" href="{% url 'patient_detail' patient.pk %}">Patient page</a></div>
+{% if patient.allergies %}<div class="alert warning"><b>Allergies:</b> {{ patient.allergies }}</div>{% endif %}
+{% if episode.has_danger_flag %}<div class="alert error"><b>Flagged for doctor review.</b> A risk factor, danger sign, high blood pressure or abnormal presentation is recorded.</div>{% endif %}
+<section class="card"><h2>Pregnancy</h2><div class="kv">
+<div><span>Gestation today</span><b>{{ episode.gestation_label }}</b></div><div><span>Last menstrual period</span><b>{{ episode.lmp|date:"j M Y" }}</b></div>
+<div><span>Due date</span><b>{{ episode.edd|date:"j M Y" }}</b></div><div><span>Pregnancies / births before</span><b>{{ episode.previous_pregnancies }} / {{ episode.previous_births }}</b></div>
+<div><span>Blood group</span><b>{{ episode.blood_group|default:"-" }}</b></div>
+{% if episode.is_active %}<div><span>Next visit</span><b>{{ next_visit|date:"j M Y"|default:"-" }}{% if next %} <span class="badge {% if next.2 == 'missed' %}flag{% elif next.2 == 'due' %}urgent{% else %}routine{% endif %}">{{ next.2|capfirst }}</span>{% endif %}</b></div>{% endif %}
+</div>{% if episode.risk_factors %}<p><b>Risk factors:</b> {{ episode.risk_factors }}</p>{% endif %}
+{% if episode.is_active %}<details style="margin-top:12px"><summary>Change due date or details</summary>
+<form method="post" action="{% url 'pregnancy_update' episode.pk %}" class="stack">{% csrf_token %}
+<div class="grid2"><label class="field">Last menstrual period<input type="date" name="lmp" value="{{ episode.lmp|date:'Y-m-d' }}" required></label><label class="field">Due date<input type="date" name="edd" value="{{ episode.edd|date:'Y-m-d' }}"></label>
+<label class="field">Previous pregnancies<input type="number" name="previous_pregnancies" value="{{ episode.previous_pregnancies }}" min="0"></label><label class="field">Previous births<input type="number" name="previous_births" value="{{ episode.previous_births }}" min="0"></label>
+<label class="field">Blood group<input name="blood_group" value="{{ episode.blood_group }}"></label></div>
+<label class="field">Risk factors<textarea name="risk_factors" rows="2">{{ episode.risk_factors }}</textarea></label><button class="btn" type="submit">Save</button></form></details>{% endif %}</section>
+
+<section class="card"><h2>Antenatal contacts</h2><div class="scroll"><table style="min-width:680px"><thead><tr><th>No.</th><th>Date</th><th>Weeks</th><th>BP</th><th>Weight</th><th>Fundal / FHR</th><th>HIV</th><th>Danger signs</th><th>Next visit</th></tr></thead><tbody>
+{% for c in contacts %}<tr><td>{{ c.number }}</td><td>{{ c.date|date:"j M Y" }}</td><td>{{ c.weeks }}</td><td>{{ c.bp_systolic|default:"-" }}/{{ c.bp_diastolic|default:"-" }}</td><td>{{ c.weight_kg|default:"-" }}</td><td>{{ c.fundal_height_cm|default:"-" }} / {{ c.fetal_heartbeat|default:"-" }}</td><td>{{ c.get_hiv_status_display }}</td>
+<td>{% if c.danger_labels %}<span class="badge flag">{{ c.danger_labels|join:", " }}</span>{% else %}-{% endif %}</td><td>{{ c.next_visit|date:"j M"|default:"-" }}</td></tr>
+{% empty %}<tr><td colspan="9" class="sub">No contacts yet.</td></tr>{% endfor %}</tbody></table></div>
+{% if episode.is_active %}<h3>Record a contact</h3>
+<form method="post" action="{% url 'antenatal_contact_add' episode.pk %}" class="stack">{% csrf_token %}
+<div class="grid2">{% for f in contact_form %}{% if f.name != 'danger_signs' and f.name != 'birth_plan' %}{% include "_field.html" with field=f %}{% endif %}{% endfor %}</div>
+{% include "_field.html" with field=contact_form.birth_plan %}
+<fieldset><legend>Danger signs</legend>{{ contact_form.danger_signs }}</fieldset><button class="btn primary" type="submit">Save contact</button></form>{% endif %}</section>
+
+{% if episode.is_active %}<section class="card"><h2>Record the delivery</h2>
+<form method="post" action="{% url 'delivery_add' episode.pk %}" class="stack">{% csrf_token %}
+<div class="grid2">{% for f in delivery_form %}{% if f.name != 'complications' %}{% include "_field.html" with field=f %}{% endif %}{% endfor %}</div>
+{% include "_field.html" with field=delivery_form.complications %}<button class="btn" type="submit">Save delivery and create baby record</button></form></section>{% endif %}
+
+{% if delivery %}<section class="card"><h2>Delivery</h2><div class="kv">
+<div><span>Born</span><b>{{ delivery.delivered_at|date:"j M Y H:i" }}</b></div><div><span>Place</span><b>{{ delivery.get_place_display }}</b></div><div><span>How</span><b>{{ delivery.get_mode_display }}</b></div>
+<div><span>Mother</span><b>{{ delivery.mother_outcome }}</b></div><div><span>Baby</span><b>{{ delivery.get_baby_outcome_display }}{% if delivery.baby %}: <a href="{% url 'patient_detail' delivery.baby.pk %}">{{ delivery.baby.hospital_number }}</a>, {{ delivery.birth_weight_kg|default:"-" }} kg{% endif %}</b></div></div>
+{% if delivery.complications %}<p><b>Complications:</b> {{ delivery.complications }}</p>{% endif %}</section>
+<section class="card"><h2>Postnatal care</h2>
+{% for who, person, row, due, status in pending %}<p><b>{{ person.full_name }}</b> ({{ who }}): contact {{ row.contact_number }} due {{ due|date:"j M Y" }} <span class="badge {% if status == 'missed' %}flag{% elif status == 'due' %}urgent{% else %}routine{% endif %}">{{ status|capfirst }}</span></p>{% endfor %}
+<table><thead><tr><th>Who</th><th>No.</th><th>Date</th><th>Findings</th><th>Danger signs</th></tr></thead><tbody>
+{% for c in postnatal %}<tr><td>{{ c.get_who_display }}</td><td>{{ c.number }}</td><td>{{ c.date|date:"j M Y" }}</td><td>{{ c.findings|truncatechars:120 }}</td><td>{% if c.danger_labels %}<span class="badge flag">{{ c.danger_labels|join:", " }}</span>{% else %}-{% endif %}</td></tr>
+{% empty %}<tr><td colspan="5" class="sub">No postnatal contacts yet.</td></tr>{% endfor %}</tbody></table>
+<div class="split"><form method="post" action="{% url 'postnatal_add' delivery.pk 'mother' %}" class="stack">{% csrf_token %}<h3>Mother contact</h3>{% for f in postnatal_form %}{% if f.name != 'danger_signs' and f.name != 'findings' %}{% include "_field.html" with field=f %}{% endif %}{% endfor %}{% include "_field.html" with field=postnatal_form.findings %}<fieldset><legend>Danger signs</legend>{{ postnatal_form.danger_signs }}</fieldset><button class="btn" type="submit">Save mother contact</button></form>
+{% if delivery.baby %}<form method="post" action="{% url 'postnatal_add' delivery.pk 'baby' %}" class="stack">{% csrf_token %}<h3>Baby contact</h3>{% for f in postnatal_form %}{% if f.name != 'danger_signs' and f.name != 'findings' %}{% include "_field.html" with field=f %}{% endif %}{% endfor %}{% include "_field.html" with field=postnatal_form.findings %}<fieldset><legend>Danger signs</legend>{{ postnatal_form.danger_signs }}</fieldset><button class="btn" type="submit">Save baby contact</button></form>{% endif %}</div></section>{% endif %}
+{% endblock %}

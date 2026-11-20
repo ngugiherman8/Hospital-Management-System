@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Pregnancies{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Maternal and child health</div><h1>Active pregnancies</h1></div><a class="btn" href="{% url 'maternity_due' %}">Due and missed contacts</a></div>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:720px"><thead><tr><th style="padding-left:20px">Woman</th><th>Gestation</th><th>Due date</th><th>Contacts</th><th>Next contact</th><th>Flag</th><th></th></tr></thead><tbody>
+{% for e, nxt in rows %}<tr><td style="padding-left:20px"><b>{{ e.patient.full_name }}</b><div class="sub" style="font-size:13px">{{ e.patient.hospital_number }}</div></td>
+<td>{{ e.gestation_label }}</td><td>{{ e.edd|date:"j M Y" }}</td><td>{{ e.contacts.count }}</td>
+<td>{% if nxt %}{{ nxt.1|date:"j M" }} <span class="badge {% if nxt.2 == 'missed' %}flag{% elif nxt.2 == 'due' %}urgent{% else %}routine{% endif %}">{{ nxt.2|capfirst }}</span>{% else %}-{% endif %}</td>
+<td>{% if e.has_danger_flag %}<span class="badge flag">Doctor review</span>{% endif %}</td>
+<td style="text-align:right"><a class="btn small" href="{% url 'pregnancy_detail' e.pk %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="7" style="padding:24px 20px">No active pregnancies. Open one from a patient's page.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}
