@@ -1,93 +1,109 @@
 import datetime
 
 import pytest
-from django.db import IntegrityError, transaction
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from apps.appointments.models import Appointment, QueueEntry
-from apps.appointments.tasks import mark_no_shows, send_due_reminders
-
-pytestmark = pytest.mark.django_db
+from apps.appointments.models import Appointment, Status, TransitionBlocked
+from apps.clinical.models import Consultation, Diagnosis, TriageRecord
 
 
-def book(patient, clinic, doctor, when):
-    return Appointment.objects.create(patient=patient, clinic=clinic, doctor=doctor, starts_at=when)
+def walk_in(patient, **kw):
+    return Appointment.objects.create(patient=patient, kind="walk_in", **kw)
 
 
-def test_queue_tickets_increment_per_day(patient, clinic, db):
-    from apps.patients.models import Patient
+def test_walk_ins_get_daily_queue_numbers(patient):
+    first = walk_in(patient)
+    second = walk_in(patient)
+    assert (first.queue_label, second.queue_label) == ("A-001", "A-002")
+    assert first.status == Status.WAITING_TRIAGE
 
-    other = Patient.objects.create(
-        first_name="B", last_name="T", date_of_birth="2000-01-01", sex="M", phone="0711000002"
+
+def test_booked_appointment_has_no_queue_number_until_check_in(patient, reception, tomorrow_10am):
+    visit = Appointment(patient=patient, kind="booked", scheduled_for=tomorrow_10am)
+    visit.full_clean()
+    visit.save()
+    assert visit.status == Status.BOOKED
+    assert visit.queue_number is None
+    visit.move_to(Status.WAITING_TRIAGE, reception)
+    assert visit.queue_number == 1
+    assert visit.visit_date == timezone.localdate()
+
+
+def test_booked_needs_a_time(patient):
+    with pytest.raises(ValidationError):
+        Appointment(patient=patient, kind="booked").full_clean()
+
+
+def test_past_time_is_rejected(patient):
+    past = timezone.now() - datetime.timedelta(hours=2)
+    with pytest.raises(ValidationError):
+        Appointment(patient=patient, kind="booked", scheduled_for=past).full_clean()
+
+
+def test_doctor_cannot_be_double_booked(patient, doctor, tomorrow_10am):
+    Appointment.objects.create(patient=patient, kind="booked", scheduled_for=tomorrow_10am, doctor=doctor)
+    with pytest.raises(ValidationError):
+        Appointment(patient=patient, kind="booked", scheduled_for=tomorrow_10am, doctor=doctor).full_clean()
+
+
+def test_cancelled_slot_can_be_rebooked(patient, doctor, reception, tomorrow_10am):
+    first = Appointment.objects.create(patient=patient, kind="booked", scheduled_for=tomorrow_10am, doctor=doctor)
+    first.move_to(Status.CANCELLED, reception)
+    Appointment(patient=patient, kind="booked", scheduled_for=tomorrow_10am, doctor=doctor).full_clean()
+
+
+def test_status_moves_follow_the_workflow_and_roles(patient, reception, nurse, doctor):
+    visit = walk_in(patient)
+    with pytest.raises(PermissionError):
+        visit.move_to(Status.WITH_DOCTOR, doctor)  # cannot skip triage
+    with pytest.raises(PermissionError):
+        visit.move_to(Status.WAITING_DOCTOR, reception)  # wrong role
+    with pytest.raises(TransitionBlocked):
+        visit.move_to(Status.WAITING_DOCTOR, nurse)  # triage not saved yet
+    TriageRecord.objects.create(appointment=visit, nurse=nurse, complaint="Fever")
+    visit.move_to(Status.WAITING_DOCTOR, nurse)
+    visit.move_to(Status.WITH_DOCTOR, doctor)
+    with pytest.raises(TransitionBlocked):
+        visit.move_to(Status.COMPLETED, doctor)  # no diagnosis or outcome yet
+    consultation = Consultation.objects.create(appointment=visit, doctor=doctor, outcome="home")
+    Diagnosis.objects.create(consultation=consultation, icd10_code="B54", name="Malaria")
+    visit.refresh_from_db()
+    visit.move_to(Status.COMPLETED, doctor)
+    assert visit.allowed_next(doctor) == []  # finished visits are closed
+
+
+def test_queue_page_lists_todays_visits(login, reception, patient):
+    walk_in(patient)
+    response = login(reception).get("/appointments/")
+    assert response.status_code == 200
+    assert b"Wanjiru Kamau" in response.content
+    assert b"A-001" in response.content
+
+
+def test_status_endpoint_enforces_roles(login, reception, nurse, patient):
+    visit = walk_in(patient)
+    response = login(reception).post(f"/appointments/{visit.pk}/status/", {"status": "waiting_doctor"})
+    assert response.status_code == 403
+    response = login(nurse).post(f"/appointments/{visit.pk}/status/", {"status": "waiting_doctor"})
+    assert response.status_code == 302
+    visit.refresh_from_db()
+    assert visit.status == Status.WAITING_TRIAGE  # blocked: no triage record
+    TriageRecord.objects.create(appointment=visit, nurse=nurse, complaint="Cough")
+    login(nurse).post(f"/appointments/{visit.pk}/status/", {"status": "waiting_doctor"})
+    visit.refresh_from_db()
+    assert visit.status == Status.WAITING_DOCTOR
+
+
+def test_status_endpoint_rejects_get(login, nurse, patient):
+    visit = walk_in(patient)
+    assert login(nurse).get(f"/appointments/{visit.pk}/status/").status_code == 405
+
+
+def test_reception_books_through_the_form(login, reception, patient, tomorrow_10am):
+    response = login(reception).post(
+        f"/appointments/new/{patient.pk}/",
+        {"kind": "booked", "clinic": "general", "scheduled_for": tomorrow_10am.astimezone().strftime("%Y-%m-%dT%H:%M")},
     )
-    a, _ = QueueEntry.join(patient=patient, clinic=clinic)
-    b, _ = QueueEntry.join(patient=other, clinic=clinic)
-    assert (a.ticket, b.ticket) == ("A-001", "A-002")
-
-
-def test_joining_twice_returns_same_entry(patient, clinic):
-    a, created1 = QueueEntry.join(patient=patient, clinic=clinic)
-    b, created2 = QueueEntry.join(patient=patient, clinic=clinic)
-    assert a.pk == b.pk and created1 and not created2
-
-
-def test_doctor_cannot_be_double_booked(patient, clinic, doctor, future):
-    book(patient, clinic, doctor, future)
-    with pytest.raises(IntegrityError), transaction.atomic():
-        book(patient, clinic, doctor, future)
-
-
-def test_cancelled_slot_can_be_rebooked(patient, clinic, doctor, future):
-    first = book(patient, clinic, doctor, future)
-    first.status = "cancelled"
-    first.save()
-    book(patient, clinic, doctor, future)
-
-
-def test_booking_form_rejects_past_and_clash(login, reception, patient, clinic, doctor, future):
-    c = login(reception)
-    url = f"/appointments/new/{patient.pk}/"
-    past = (timezone.localtime() - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
-    assert b"future" in c.post(url, {"clinic": clinic.pk, "doctor": doctor.pk, "starts_at": past}).content
-    when = timezone.localtime(future).strftime("%Y-%m-%dT%H:%M")
-    assert c.post(url, {"clinic": clinic.pk, "doctor": doctor.pk, "starts_at": when}).status_code == 302
-    assert b"already booked" in c.post(url, {"clinic": clinic.pk, "doctor": doctor.pk, "starts_at": when}).content
-
-
-def test_reminders_sent_once(patient, clinic, doctor, future, caplog):
-    book(patient, clinic, doctor, future)
-    caplog.set_level("INFO")
-    assert send_due_reminders() == 1
-    assert send_due_reminders() == 0
-    assert "SMS to 254712345678" in caplog.text
-
-
-def test_reminder_not_sent_for_far_future_or_cancelled(patient, clinic, doctor):
-    book(patient, clinic, doctor, timezone.now() + datetime.timedelta(days=5))
-    assert send_due_reminders() == 0
-
-
-def test_stale_booked_appointments_become_no_show(patient, clinic, doctor):
-    a = book(patient, clinic, doctor, timezone.now() - datetime.timedelta(hours=14))
-    assert mark_no_shows() == 1
-    a.refresh_from_db()
-    assert a.status == "no_show"
-
-
-def test_arrived_adds_to_queue(login, reception, patient, clinic, doctor, future):
-    a = book(patient, clinic, doctor, future)
-    login(reception).post(f"/appointments/{a.pk}/arrived/")
-    a.refresh_from_db()
-    assert a.status == "arrived" and a.queue_entry.doctor == doctor and not a.queue_entry.is_walk_in
-
-
-def test_queue_page_counts_and_filter(login, reception, patient, clinic):
-    QueueEntry.join(patient=patient, clinic=clinic)
-    c = login(reception)
-    assert b"A-001" in c.get("/").content
-    assert b"A-001" not in c.get("/?tab=lab").content
-    assert b"A-001" in c.get("/?tab=triage").content
-
-
-def test_health_endpoint(client, db):
-    assert client.get("/health/").json() == {"status": "ok", "pending_migrations": []}
+    assert response.status_code == 302
+    assert Appointment.objects.filter(patient=patient, status=Status.BOOKED).count() == 1
