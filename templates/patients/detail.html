@@ -1,15 +1,32 @@
-{% extends "base.html" %}{% block title %}{{ patient.full_name }}{% endblock %}
-{% block content %}<div class="top"><div><p class="sub" style="margin:0">Patients / {{ patient.hospital_number }}</p><h1>{{ patient.full_name }}</h1>
-<p class="sub">{{ patient.get_sex_display }}, {{ patient.age }} years. {{ patient.hospital_number }}</p></div>
-<div><a class="btn" href="{% url 'clinical:history' patient.pk %}">Clinical history</a>{% if user.role == 'doctor' or user.role == 'admin' or user.is_superuser %} <a class="btn" href="{% url 'wards:admit_patient' patient.pk %}">Admit to ward</a>{% endif %}{% if user.role == 'receptionist' or user.role == 'admin' or user.is_superuser %} <a class="btn" href="{% url 'patients:edit' patient.pk %}">Edit</a>{% endif %}</div></div>
-{% if patient.allergies %}<div class="msg error"><b>Allergies:</b> {{ patient.allergies }}</div>{% endif %}
-<div class="layout"><div><section class="card"><h2>Details</h2><dl class="dl">
-<dt>Date of birth</dt><dd>{{ patient.date_of_birth|date:"j F Y" }}</dd><dt>ID</dt><dd>{{ patient.get_id_type_display }} {{ patient.masked_id }}</dd>
-<dt>Phone</dt><dd>{{ patient.phone }}</dd><dt>Area</dt><dd>{{ patient.area_of_residence|default:"-" }}</dd>
-<dt>Next of kin</dt><dd>{{ patient.next_of_kin_name|default:"-" }}{% if patient.next_of_kin_relationship %} ({{ patient.next_of_kin_relationship }}){% endif %} {{ patient.next_of_kin_phone }}</dd>
-<dt>Payer</dt><dd>{{ cover|default:"Cash / M-Pesa" }}</dd></dl></section>
-<section class="card"><h2>Recent appointments</h2><table><tbody>{% for a in appointments %}<tr><td>{{ a.starts_at|date:"D j M, H:i" }}</td><td>{{ a.clinic }}</td><td>{{ a.doctor }}</td><td>{{ a.get_status_display }}</td></tr>{% empty %}<tr><td>No appointments yet.</td></tr>{% endfor %}</tbody></table></section></div>
-{% if user.role == 'receptionist' or user.role == 'admin' or user.is_superuser %}<aside><section class="card"><h2>Today</h2>
-<form method="post" action="{% url 'walk_in' patient.pk %}">{% csrf_token %}<div class="field"><label for="clinic">Clinic</label><select id="clinic" name="clinic">{% for c in clinics %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select></div>
-<button class="btn primary" style="width:100%">Add to today's queue</button></form>
-<p style="margin-top:12px"><a class="btn" style="width:100%;text-align:center" href="{% url 'appointments:create' patient.pk %}">Book appointment</a></p></section></aside>{% endif %}</div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}{{ patient.full_name }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Patients / {{ patient.hospital_number }}</div><h1>{{ patient.full_name }}</h1><div class="sub">{{ patient.get_sex_display }}, {{ patient.age }} years</div></div>
+<div class="row">
+{% if user.role == 'reception' or user.is_superuser or user.role == 'admin' %}<a class="btn" href="{% url 'patient_edit' patient.pk %}">Edit details</a><a class="btn primary" href="{% url 'appointment_create' patient.pk %}">Add visit or book</a>{% endif %}
+{% if patient.sex == 'F' and user.role == 'midwife' or patient.sex == 'F' and user.role == 'doctor' or patient.sex == 'F' and user.role == 'admin' %}<a class="btn" href="{% url 'maternity_for_patient' patient.pk %}">Pregnancy record</a>{% endif %}
+</div></div>
+{% if patient.mother %}<div class="sub">Mother: <a href="{% url 'patient_detail' patient.mother.pk %}">{{ patient.mother.full_name }}</a> ({{ patient.mother.hospital_number }})</div>{% endif %}
+{% if patient.allergies %}<div class="alert warning"><b>Allergies:</b> {{ patient.allergies }}</div>{% endif %}
+<section class="card"><h2>Details</h2><div class="kv">
+<div><span>Hospital number</span><b>{{ patient.hospital_number }}</b></div>
+<div><span>Date of birth</span><b>{{ patient.date_of_birth|date:"j M Y" }}</b></div>
+<div><span>ID</span><b>{{ patient.get_id_type_display }} {{ patient.id_number }}</b></div>
+<div><span>Phone</span><b>{{ patient.phone|default:"-" }}</b></div>
+<div><span>Residence</span><b>{{ patient.residence|default:"-" }}</b></div>
+<div><span>Next of kin</span><b>{{ patient.kin_name|default:"-" }} {% if patient.kin_relationship %}({{ patient.kin_relationship }}){% endif %} {{ patient.kin_phone }}</b></div>
+<div><span>Payer</span><b>{{ patient.get_payer_display }} {{ patient.payer_name }} {{ patient.member_number }}</b></div>
+</div></section>
+<section class="card"><h2>Visits</h2>
+{% for v in visits %}<div style="border-top:1px solid var(--line);padding:14px 0">
+<div class="row" style="justify-content:space-between"><div><b>{{ v.visit_date|date:"j M Y" }}</b> <span class="sub">{{ v.get_clinic_display }}, {{ v.doctor|default:"any available doctor" }}</span></div>
+<div>{% if can_see_clinical and v.consultation or can_see_clinical and v.triage %}<a href="{% url 'visit_detail' v.pk %}">Open visit</a> {% endif %}<span class="badge {{ v.status }}">{{ v.get_status_display }}</span></div></div>
+{% if can_see_clinical %}
+{% if v.triage %}<div class="sub">Triage: {{ v.triage.complaint }}{% if v.triage.flag_labels %}. Out of range: {{ v.triage.flag_labels|join:", " }}{% endif %}</div>{% endif %}
+{% if v.consultation %}{% for d in v.consultation.diagnoses.all %}<div>Diagnosis: <b>{{ d }}</b></div>{% endfor %}{% with n=v.consultation.current_note %}{% if n %}<div class="sub">Note v{{ n.version }}: {{ n.plan|truncatechars:140 }}</div>{% endif %}{% endwith %}{% endif %}
+{% for o in v.orders.all %}{% for i in o.items.all %}{% if i.study %}<div>{{ i.test.name }}: <span class="badge {{ i.study.status }}">{{ i.study.get_status_display }}</span> {% with r=i.study.current_report %}{% if r %}{{ r.impression|truncatechars:100 }}{% endif %}{% endwith %}</div>{% else %}{% with r=i.current_result %}<div>{{ i.test.name }}: {% if r %}<b>{{ r.value }}</b> {{ r.unit }} {% if r.flag != 'normal' %}<span class="badge {{ r.flag }}">{{ r.get_flag_display }}</span>{% endif %}{% else %}<span class="sub">{{ i.get_status_display }}</span>{% endif %}</div>{% endwith %}{% endif %}{% endfor %}{% endfor %}
+{% endif %}
+</div>
+{% empty %}<p class="sub">No visits yet.</p>{% endfor %}
+</section>
+{% endblock %}
