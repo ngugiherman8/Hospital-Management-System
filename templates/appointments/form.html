@@ -1,5 +1,15 @@
-{% extends "base.html" %}{% block title %}Book appointment{% endblock %}
-{% block content %}<h1>Book appointment</h1><p class="sub">{{ patient.full_name }}, {{ patient.hospital_number }}</p>
-<form method="post" class="card" style="max-width:560px" novalidate>{% csrf_token %}
-{% for f in form %}<div class="field"><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{% for e in f.errors %}<div class="err">{{ e }}</div>{% endfor %}</div>{% endfor %}
-<a class="btn" href="{{ patient.get_absolute_url }}">Cancel</a> <button class="btn primary" type="submit">Book</button></form>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Add visit{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Patients / {{ patient.hospital_number }}</div><h1>Add visit or book</h1><div class="sub">{{ patient.full_name }}</div></div></div>
+<form method="post" class="card" style="max-width:640px">
+{% csrf_token %}
+{% if form.non_field_errors %}<div class="alert error">{{ form.non_field_errors }}</div>{% endif %}
+<div class="grid2">
+{% include "_field.html" with field=form.kind %}{% include "_field.html" with field=form.clinic %}
+{% include "_field.html" with field=form.doctor %}{% include "_field.html" with field=form.scheduled_for %}
+</div>
+{% include "_field.html" with field=form.reason %}
+<div class="row"><a class="btn" href="{% url 'patient_detail' patient.pk %}">Cancel</a><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endblock %}

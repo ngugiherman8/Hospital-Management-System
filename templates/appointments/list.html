@@ -1,9 +1,46 @@
-{% extends "base.html" %}{% block title %}Appointments{% endblock %}
-{% block content %}<div class="top"><div><h1>Appointments</h1><p class="sub">{{ day|date:"l j F Y" }}</p></div>
-<form method="get"><input type="date" name="date" value="{{ day|date:'Y-m-d' }}" onchange="this.form.submit()" aria-label="Day"></form></div>
-<div class="card"><table><thead><tr><th>Time</th><th>Patient</th><th>Clinic</th><th>Doctor</th><th>Status</th><th></th></tr></thead><tbody>
-{% for a in appointments %}<tr><td>{{ a.starts_at|date:"H:i" }}</td><td><a href="{{ a.patient.get_absolute_url }}">{{ a.patient.full_name }}</a><small>{{ a.patient.hospital_number }}</small></td><td>{{ a.clinic }}</td><td>{{ a.doctor }}</td><td>{{ a.get_status_display }}</td>
-<td style="text-align:right">{% if a.status == 'booked' and user.role == 'receptionist' or a.status == 'booked' and user.role == 'admin' or a.status == 'booked' and user.is_superuser %}
-<form method="post" action="{% url 'appointments:status' a.pk 'arrived' %}" style="display:inline">{% csrf_token %}<button class="btn sm">Arrived</button></form>
-<form method="post" action="{% url 'appointments:status' a.pk 'cancel' %}" style="display:inline">{% csrf_token %}<button class="btn sm">Cancel</button></form>{% endif %}</td></tr>
-{% empty %}<tr><td colspan="6">No appointments on this day.</td></tr>{% endfor %}</tbody></table></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Today's queue{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">{{ day|date:"l j F Y" }}</div><h1>{% if is_today %}Today's queue{% else %}Visits{% endif %}</h1></div>
+{% if user.role == 'reception' or user.is_superuser or user.role == 'admin' %}<a class="btn primary" href="{% url 'patient_create' %}">Register new patient</a>{% endif %}</div>
+<div class="stats">
+  <div class="stat"><span>Waiting for triage</span><b>{{ waiting_triage }}</b></div>
+  <div class="stat"><span>Waiting for doctor</span><b>{{ waiting_doctor }}</b></div>
+  <div class="stat"><span>With doctor</span><b>{{ with_doctor }}</b></div>
+  <div class="stat"><span>Seen</span><b>{{ completed }}</b></div>
+</div>
+<section class="card" style="padding:0">
+  <div class="row" style="padding:16px 20px;border-bottom:1px solid var(--line);justify-content:space-between">
+    <div class="tabs">
+      <a href="?date={{ day|date:'Y-m-d' }}" class="{% if not stage %}on{% endif %}">All</a>
+      <a href="?date={{ day|date:'Y-m-d' }}&stage=booked" class="{% if stage == 'booked' %}on{% endif %}">Booked</a>
+      <a href="?date={{ day|date:'Y-m-d' }}&stage=waiting_triage" class="{% if stage == 'waiting_triage' %}on{% endif %}">Triage</a>
+      <a href="?date={{ day|date:'Y-m-d' }}&stage=waiting_doctor" class="{% if stage == 'waiting_doctor' %}on{% endif %}">Doctor</a>
+    </div>
+    <form method="get" class="row"><label class="field">Date<input type="date" name="date" value="{{ day|date:'Y-m-d' }}"></label><button class="btn" style="align-self:flex-end" type="submit">Go</button></form>
+  </div>
+  <div class="scroll"><table style="min-width:760px">
+  <thead><tr><th style="padding-left:20px">No.</th><th>Patient</th><th>Clinic</th><th>Time</th><th>Payer</th><th>Waiting</th><th>Stage</th><th></th></tr></thead>
+  <tbody>
+  {% for a, moves in rows %}
+  <tr>
+    <td style="padding-left:20px"><b>{{ a.queue_label|default:"-" }}</b></td>
+    <td><a href="{% url 'patient_detail' a.patient.pk %}"><b>{{ a.patient.full_name }}</b></a><div class="sub" style="font-size:13px">{{ a.patient.get_sex_display }}, {{ a.patient.age }}. {{ a.patient.hospital_number }}</div></td>
+    <td>{{ a.get_clinic_display }}</td>
+    <td>{% if a.scheduled_for %}{{ a.scheduled_for|time:"H:i" }}{% else %}Walk-in{% endif %}</td>
+    <td>{{ a.patient.get_payer_display }}</td>
+    <td>{% if a.minutes_waiting is not None %}{{ a.minutes_waiting }} min{% else %}-{% endif %}</td>
+    <td><span class="badge {{ a.status }}">{{ a.get_status_display }}</span>{% if a.is_emergency %} <span class="badge emergency">Emergency</span>{% elif a.triage.priority == 'urgent' %} <span class="badge urgent">Urgent</span>{% endif %}</td>
+    <td style="text-align:right"><div class="row" style="justify-content:flex-end">
+    {% if a.status == 'waiting_triage' and a.clinic != 'dental' %}
+      {% if user.role == 'nurse' or user.role == 'admin' or user.is_superuser %}<a class="btn small" href="{% url 'triage' a.pk %}">Triage</a>{% endif %}
+      {% if user.role == 'reception' or user.role == 'admin' or user.is_superuser %}<form method="post" action="{% url 'appointment_fast_track' a.pk %}" class="row" style="gap:6px">{% csrf_token %}<input name="reason" placeholder="Emergency reason" aria-label="Emergency reason" required style="height:36px;border:1px solid var(--field);border-radius:8px;padding:0 8px"><button class="btn small" type="submit">Send to doctor now</button></form>{% endif %}
+    {% elif a.triage %}<a class="btn small" href="{% url 'triage' a.pk %}">Vitals</a>{% endif %}
+    {% if a.status == 'with_doctor' or a.status == 'awaiting_results' or a.status == 'admitted' %}{% if user.role == 'doctor' or user.role == 'nurse' or user.role == 'dentist' or user.role == 'midwife' or user.role == 'admin' or user.is_superuser %}<a class="btn small" href="{% url 'visit_detail' a.pk %}">Open</a>{% endif %}{% endif %}
+    {% for s in moves %}<form method="post" action="{% url 'appointment_status' a.pk %}">{% csrf_token %}<input type="hidden" name="status" value="{{ s }}"><button class="btn small" type="submit">{% if s == 'waiting_triage' %}Check in{% elif s == 'waiting_doctor' %}Send to doctor{% elif s == 'with_doctor' %}Call in{% elif s == 'completed' %}Finish{% elif s == 'no_show' %}Did not come{% else %}Cancel{% endif %}</button></form>{% endfor %}
+    </div></td>
+  </tr>
+  {% empty %}<tr><td colspan="8" style="padding:24px 20px">No visits for this day.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
