@@ -1,1 +1,7 @@
-
+{% extends "base.html" %}
+{% block title %}Stock adjustment{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pharmacy</div><h1>Adjust or write off stock</h1><p class="sub">Every change needs a reason and is kept with your name. Nothing is overwritten. <a href="{% url 'stock_take' %}">Go to stock-take</a></p></div></div>
+<section class="card"><form method="post" class="stack">{% csrf_token %}<div class="grid2">{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}</div><div><button class="btn primary" type="submit">Save</button></div></form></section>
+<section class="card"><h2>Recent</h2><table><thead><tr><th>When</th><th>Batch</th><th>Kind</th><th class="num">Qty</th><th>Reason</th><th>By</th></tr></thead><tbody>{% for m in recent %}<tr><td>{{ m.created_at|date:"j M H:i" }}</td><td>{{ m.batch }}</td><td>{{ m.get_kind_display }}</td><td class="num">{{ m.quantity }}</td><td>{{ m.reason }}</td><td>{{ m.user }}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

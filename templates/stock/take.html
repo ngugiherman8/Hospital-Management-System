@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Stock-take{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pharmacy</div><h1>Stock-take, {{ today|date:"j M Y" }}</h1><p class="sub">Count each batch on the shelf and type the number. Leave a row empty to skip it. Differences are saved as adjustments. <a href="{% url 'stock_adjust' %}">Single adjustment or write-off</a></p></div></div>
+{% if results %}<section class="card"><h2>Result</h2><table><thead><tr><th>Batch</th><th class="num">System said</th><th class="num">Counted</th><th class="num">Difference</th></tr></thead><tbody>{% for b, system, counted, diff in results %}<tr><td>{{ b }}</td><td class="num">{{ system }}</td><td class="num">{{ counted }}</td><td class="num">{{ diff }}</td></tr>{% endfor %}</tbody></table></section>{% endif %}
+<form method="post">{% csrf_token %}<section class="card" style="padding:0"><div class="scroll"><table style="min-width:640px"><thead><tr><th style="padding-left:20px">Drug and batch</th><th>Expiry</th><th class="num">System says</th><th>Counted</th></tr></thead><tbody>
+{% for b, q in rows %}<tr><td style="padding-left:20px">{{ b.drug }}<div class="sub" style="font-size:13px">Batch {{ b.batch_number }}</div></td><td>{{ b.expiry_date|date:"j M Y" }}{% if b.expired %} <span class="badge out">Expired</span>{% endif %}</td><td class="num">{{ q }}</td><td><input name="count_{{ b.pk }}" type="number" min="0" style="width:100px;height:44px"></td></tr>{% empty %}<tr><td colspan="4" style="padding:24px 20px">No batches in stock.</td></tr>{% endfor %}</tbody></table></div></section>
+<div style="margin-top:16px"><button class="btn primary" type="submit">Save counts</button></div></form>
+{% endblock %}

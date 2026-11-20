@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Purchase orders{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pharmacy</div><h1>Purchase orders</h1></div></div>
+<section class="card"><form method="post" action="{% url 'order_create' %}" class="row">{% csrf_token %}{% include "_field.html" with field=form.supplier %}<button class="btn primary" type="submit">New order</button></form></section>
+<section class="card" style="padding:0"><table><thead><tr><th style="padding-left:20px">Order</th><th>Supplier</th><th>Status</th></tr></thead><tbody>{% for o in orders %}<tr><td style="padding-left:20px"><a href="{% url 'order_detail' o.pk %}">{{ o.number }}</a></td><td>{{ o.supplier }}</td><td><span class="badge {{ o.status }}">{{ o.get_status_display }}</span></td></tr>{% empty %}<tr><td colspan="3" style="padding:24px 20px">No orders.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

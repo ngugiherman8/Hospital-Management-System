@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ order }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'order_list' %}">Purchase orders</a></div><h1>{{ order.number }} <span class="badge {{ order.status }}">{{ order.get_status_display }}</span></h1><p class="sub">{{ order.supplier }}</p></div>
+<div class="row">{% if order.status == 'draft' %}<form method="post" action="{% url 'order_status' order.pk 'send' %}">{% csrf_token %}<button class="btn primary" type="submit">Mark as sent</button></form>{% endif %}
+{% if order.status == 'sent' or order.status == 'part' %}<form method="post" action="{% url 'receipt_create' %}" class="row">{% csrf_token %}<input type="hidden" name="po" value="{{ order.pk }}"><input name="supplier_invoice" placeholder="Supplier invoice" style="height:44px"><button class="btn primary" type="submit">Receive goods</button></form>{% endif %}
+{% if order.status == 'draft' or order.status == 'sent' %}<form method="post" action="{% url 'order_status' order.pk 'cancel' %}">{% csrf_token %}<button class="btn" type="submit">Cancel order</button></form>{% endif %}</div></div>
+<section class="card"><table><thead><tr><th>Drug</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Unit cost</th></tr></thead><tbody>{% for l, got in lines %}<tr><td>{{ l.drug }}</td><td class="num">{{ l.quantity }}</td><td class="num">{{ got }}</td><td class="num">{{ l.unit_cost }}</td></tr>{% empty %}<tr><td colspan="4">No lines yet.</td></tr>{% endfor %}</tbody></table>
+{% if order.status == 'draft' %}<form method="post" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn" type="submit">Add line</button></form>{% endif %}</section>
+{% endblock %}

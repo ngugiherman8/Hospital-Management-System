@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Suppliers{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pharmacy</div><h1>Suppliers</h1></div></div>
+<section class="card"><form method="post" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add supplier</button></form></section>
+<section class="card"><table><thead><tr><th>Name</th><th>Phone</th><th>Email</th></tr></thead><tbody>{% for s in suppliers %}<tr><td>{{ s.name }}</td><td>{{ s.phone }}</td><td>{{ s.email }}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

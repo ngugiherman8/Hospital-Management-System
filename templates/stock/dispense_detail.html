@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Dispense{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'dispense_queue' %}">Dispensing</a></div><h1>{{ patient.full_name }}</h1><p class="sub">{{ patient.hospital_number }}{% if patient.allergies %}. <b>Allergies: {{ patient.allergies }}</b>{% endif %}</p></div><span class="badge {{ rx.dispensing_status }}">{{ rx.get_dispensing_status_display }}</span></div>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:720px"><thead><tr><th style="padding-left:20px">Drug and directions</th><th class="num">Left to give</th><th class="num">In stock</th><th>From batch</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td style="padding-left:20px"><b>{{ r.item.drug }}</b><div class="sub" style="font-size:13px">{{ r.item.dose }}, {{ r.item.frequency }}, {{ r.item.days }} days. Prescribed {{ r.item.quantity }}</div></td>
+<td class="num">{{ r.left }}</td><td class="num">{{ r.on_hand }}</td>
+<td>{% for b, n in r.plan %}{{ n }} from batch {{ b.batch_number }} (exp {{ b.expiry_date|date:"M Y" }}){% if not forloop.last %}<br>{% endif %}{% endfor %}{% if r.short %}<span class="badge out">{{ r.short }} short</span>{% endif %}</td>
+<td class="num">{% if r.left > 0 and r.on_hand > 0 %}<form method="post" action="{% url 'dispense_item' rx.pk r.item.pk %}" class="row" style="justify-content:flex-end">{% csrf_token %}<input name="quantity" type="number" min="1" max="{% if r.on_hand < r.left %}{{ r.on_hand }}{% else %}{{ r.left }}{% endif %}" value="{% if r.on_hand < r.left %}{{ r.on_hand }}{% else %}{{ r.left }}{% endif %}" style="width:90px;height:44px"><button class="btn small" type="submit">Dispense</button></form>{% elif r.left <= 0 %}Done{% endif %}</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

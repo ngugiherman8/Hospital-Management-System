@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Stock levels{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pharmacy</div><h1>Stock levels</h1></div></div>
+{% if low %}<div class="alert error" role="alert"><b>Low or out of stock:</b> {% for r in low %}{{ r.drug }} ({{ r.on_hand }}){% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+{% if expiring %}<div class="alert error" role="alert"><b>Expired or expiring within 90 days:</b> {% for r in expiring %}{{ r.drug }}{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:640px"><thead><tr><th style="padding-left:20px">Drug</th><th class="num">On hand</th><th class="num">Reorder at</th><th>Warnings</th></tr></thead><tbody>
+{% for r in rows %}<tr><td style="padding-left:20px">{{ r.drug }}</td><td class="num">{{ r.on_hand }}</td><td class="num">{{ r.drug.reorder_level }}</td><td>{% if r.out %}<span class="badge out">Out of stock</span> {% elif r.low %}<span class="badge part">Low</span> {% endif %}{% for b in r.expiring %}<span class="badge part">Batch {{ b.batch_number }} expires {{ b.expiry_date|date:"j M Y" }}</span> {% endfor %}{% for b, q in r.expired %}<span class="badge out">Expired: batch {{ b.batch_number }} ({{ q }})</span> {% endfor %}</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

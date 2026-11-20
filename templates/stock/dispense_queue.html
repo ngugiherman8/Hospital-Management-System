@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Dispensing{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pharmacy</div><h1>Prescriptions to dispense</h1></div></div>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:560px"><thead><tr><th style="padding-left:20px">Patient</th><th>Written</th><th>Status</th><th></th></tr></thead><tbody>
+{% for p in prescriptions %}<tr><td style="padding-left:20px">{{ p.consultation.appointment.patient.full_name }}<div class="sub" style="font-size:13px">{{ p.consultation.appointment.patient.hospital_number }}</div></td><td>{{ p.created_at|date:"j M H:i" }}</td><td><span class="badge {{ p.dispensing_status }}">{{ p.get_dispensing_status_display }}</span></td><td class="num"><a class="btn small" href="{% url 'dispense_detail' p.pk %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="4" style="padding:24px 20px">Nothing waiting.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

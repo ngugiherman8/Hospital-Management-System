@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ receipt }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'receipt_list' %}">Goods received</a></div><h1>{{ receipt.number }}</h1><p class="sub">{{ receipt.supplier }}{% if receipt.supplier_invoice %}, supplier invoice {{ receipt.supplier_invoice }}{% endif %}{% if receipt.purchase_order %}, order {{ receipt.purchase_order }}{% endif %}</p></div></div>
+<section class="card"><h2>Add a batch</h2><form method="post" class="stack">{% csrf_token %}<div class="grid2">{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}</div><div><button class="btn primary" type="submit">Receive into stock</button></div></form></section>
+<section class="card"><h2>Received on this receipt</h2><table><thead><tr><th>Drug</th><th>Batch</th><th>Expiry</th><th class="num">Quantity</th></tr></thead><tbody>{% for m in movements %}<tr><td>{{ m.batch.drug }}</td><td>{{ m.batch.batch_number }}</td><td>{{ m.batch.expiry_date|date:"j M Y" }}</td><td class="num">{{ m.quantity }}</td></tr>{% empty %}<tr><td colspan="4">Nothing yet.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}
