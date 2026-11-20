@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Visit: {{ patient.full_name }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Queue / {{ visit.queue_label|default:"Visit" }}</div><h1>{{ patient.full_name }}</h1>
+<div class="sub">{{ patient.get_sex_display }}, {{ patient.age }} years. {{ patient.hospital_number }} <span class="badge {{ visit.status }}">{{ visit.get_status_display }}</span></div></div>
+<div class="row">
+{% if visit.clinic == 'dental' %}<a class="btn" href="{% url 'dental_visit' visit.pk %}">Dental chart and plan</a>{% endif %}
+{% if visit.clinic == 'mch' and user.role != 'nurse' %}<a class="btn" href="{% url 'maternity_for_patient' patient.pk %}">Antenatal and postnatal record</a>{% endif %}
+{% for s in moves %}<form method="post" action="{% url 'appointment_status' visit.pk %}">{% csrf_token %}<input type="hidden" name="status" value="{{ s }}"><input type="hidden" name="next" value="{% url 'visit_detail' visit.pk %}"><button class="btn {% if s == 'completed' %}primary{% endif %}" type="submit">{% if s == 'awaiting_results' %}Wait for results{% elif s == 'with_doctor' %}Results are in{% elif s == 'completed' %}Finish visit{% else %}{{ s }}{% endif %}</button></form>{% endfor %}
+</div></div>
+{% if patient.allergies %}<div class="alert warning"><b>Allergies:</b> {{ patient.allergies }}</div>{% endif %}
+<div class="split"><div class="stack">
+
+<section class="card"><h2>Triage</h2>
+{% if triage %}<span class="badge {{ triage.priority }}">{{ triage.get_priority_display }}</span>{% include "clinical/_vitals.html" %}<p><b>Complaint:</b> {{ triage.complaint }}</p>
+{% elif visit.emergency_reason %}<p class="sub">Sent to the doctor before triage. Reason: {{ visit.emergency_reason }}</p>
+{% else %}<p class="sub">No triage record.</p>{% endif %}</section>
+
+<section class="card"><h2>Notes</h2>
+{% if can_edit %}
+<form method="post" action="{% url 'note_save' visit.pk %}" class="stack">{% csrf_token %}
+{% include "_field.html" with field=note_form.history %}{% include "_field.html" with field=note_form.examination %}{% include "_field.html" with field=note_form.plan %}
+<button class="btn primary" type="submit">Save as new version</button></form>
+{% endif %}
+{% for n in notes %}<details {% if forloop.first %}open{% endif %} style="margin-top:12px"><summary><b>Version {{ n.version }}</b> by {{ n.author|default:"unknown" }}, {{ n.created_at|date:"j M Y H:i" }}</summary>
+<p><b>History:</b> {{ n.history|linebreaksbr }}</p><p><b>Examination:</b> {{ n.examination|linebreaksbr }}</p><p><b>Plan:</b> {{ n.plan|linebreaksbr }}</p></details>
+{% empty %}<p class="sub">No notes yet.</p>{% endfor %}</section>
+
+<section class="card"><h2>Diagnosis</h2>
+<ul>{% for d in diagnoses %}<li><b>{{ d.icd10_code }}</b> {{ d.name }} ({{ d.get_certainty_display }})</li>{% empty %}<li class="sub">None yet.</li>{% endfor %}</ul>
+{% if can_edit %}
+<form method="post" action="{% url 'diagnosis_add' visit.pk %}" class="row" style="align-items:flex-end">{% csrf_token %}
+<label class="field">Search ICD-10<input type="search" id="icd-q" list="icd-list" autocomplete="off" placeholder="e.g. malaria"></label>
+<datalist id="icd-list"></datalist>
+{% include "_field.html" with field=diagnosis_form.icd10_code %}{% include "_field.html" with field=diagnosis_form.name %}{% include "_field.html" with field=diagnosis_form.certainty %}
+<button class="btn" type="submit">Add</button></form>
+<script>
+(function(){var q=document.getElementById('icd-q'),l=document.getElementById('icd-list'),code=document.getElementById('id_icd10_code'),name=document.getElementById('id_name'),hits={};
+q.addEventListener('input',function(){if(q.value.length<2)return;fetch('{% url "icd10_lookup" %}?q='+encodeURIComponent(q.value)).then(function(r){return r.json()}).then(function(d){l.innerHTML='';hits={};d.results.forEach(function(x){var v=x.code+' '+x.name;hits[v]=x;var o=document.createElement('option');o.value=v;l.appendChild(o)});var h=hits[q.value];if(h){code.value=h.code;name.value=h.name}})});})();
+</script>
+{% endif %}</section>
+
+<section class="card"><h2>Tests</h2>
+{% for o in orders %}<div style="margin-bottom:12px"><b>{{ o.number }}</b> <span class="sub">{{ o.ordered_by }}, {{ o.created_at|date:"j M H:i" }}{% if o.note %}. {{ o.note }}{% endif %}</span>
+<table><tbody>{% for i in o.items.all %}<tr><td>{{ i.test.name }}</td><td><span class="badge {{ i.status }}">{{ i.get_status_display }}</span></td>
+<td>{% with r=i.current_result %}{% if r %}<b>{{ r.value }}</b> {{ r.unit }} {% if r.flag != 'normal' %}<span class="badge {{ r.flag }}">{{ r.get_flag_display }}</span>{% endif %} <span class="sub">{{ r.comment }}</span>{% endif %}{% endwith %}</td>
+<td style="text-align:right">{% if can_edit and i.status != 'result_in' and i.status != 'cancelled' %}<form method="post" action="{% url 'item_cancel' i.pk %}">{% csrf_token %}<button class="btn small" type="submit">Cancel</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% empty %}<p class="sub">No tests ordered.</p>{% endfor %}
+{% if can_edit %}
+<form method="post" action="{% url 'order_create' visit.pk %}" class="stack">{% csrf_token %}
+{{ order_form.tests }}{% include "_field.html" with field=order_form.note %}<button class="btn" type="submit">Order tests</button></form>
+{% endif %}</section>
+
+<section class="card"><h2>Imaging</h2>
+{% for s in studies %}<div style="margin-bottom:10px"><a href="{% url 'study_detail' s.pk %}"><b>{{ s.item.test.name }}</b></a> <span class="sub">{{ s.accession_number }}</span> <span class="badge {{ s.status }}">{{ s.get_status_display }}</span>
+{% with r=s.current_report %}{% if r %}{% if r.critical %}<span class="badge flag">Critical</span>{% endif %}<div>{{ r.impression|truncatechars:200 }}</div>{% endif %}{% endwith %}
+{% if s.unacknowledged_critical and can_edit %}<form method="post" action="{% url 'critical_acknowledge' s.unacknowledged_critical.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'visit_detail' visit.pk %}"><button class="btn small" type="submit">I have read this critical finding</button></form>{% endif %}</div>
+{% empty %}<p class="sub">No imaging ordered.</p>{% endfor %}
+{% if can_edit %}<form method="post" action="{% url 'imaging_order' visit.pk %}" class="stack">{% csrf_token %}
+{{ imaging_form.studies }}{% include "_field.html" with field=imaging_form.clinical_reason %}
+<div class="grid2">{% include "_field.html" with field=imaging_form.may_be_pregnant %}{% include "_field.html" with field=imaging_form.contrast_allergy %}{% include "_field.html" with field=imaging_form.kidney_problem %}</div>
+<p class="sub">Pregnancy is asked for studies that use radiation; contrast allergy and kidney problems for contrast studies.</p>
+<button class="btn" type="submit">Order imaging</button></form>{% endif %}</section>
+
+<section class="card"><h2>Prescription</h2>
+{% for p in prescriptions %}<ul>{% for i in p.items.all %}<li><b>{{ i.drug }}</b>: {{ i.dose }}, {{ i.frequency }}, {{ i.days }} days, quantity {{ i.quantity }}{% if i.allergy_warning %} <span class="badge flag">Allergy warning acknowledged by {{ i.allergy_acknowledged_by }}</span>{% endif %}</li>{% endfor %}</ul>
+<div class="sub">Dispensing: {{ p.get_dispensing_status_display }}</div>
+{% empty %}<p class="sub">Nothing prescribed.</p>{% endfor %}
+{% if can_edit %}
+<form method="post" action="{% url 'prescribe' visit.pk %}" class="stack">{% csrf_token %}
+<div class="grid2">{% include "_field.html" with field=rx_form.drug %}{% include "_field.html" with field=rx_form.dose %}{% include "_field.html" with field=rx_form.frequency %}{% include "_field.html" with field=rx_form.days %}{% include "_field.html" with field=rx_form.quantity %}</div>
+<label><input type="checkbox" name="acknowledge_allergy"> {{ rx_form.acknowledge_allergy.label }}</label>
+<div><button class="btn" type="submit">Add to prescription</button></div></form>
+{% endif %}</section>
+</div>
+
+<div class="stack">
+<section class="card"><h2>Outcome</h2>
+{% if can_edit %}
+<form method="post" action="{% url 'outcome_save' visit.pk %}" class="stack">{% csrf_token %}
+{% include "_field.html" with field=outcome_form.outcome %}{% include "_field.html" with field=outcome_form.refer_to %}{% include "_field.html" with field=outcome_form.review_date %}
+<button class="btn" type="submit">Save outcome</button></form>
+{% else %}<p>{{ consultation.get_outcome_display|default:"Not decided" }}{% if consultation.review_date %}. Review on {{ consultation.review_date|date:"j M Y" }}{% endif %}</p>{% endif %}</section>
+
+<section class="card"><h2>Admission</h2>
+{% if admission %}<p><b>{{ admission.number }}</b>, {{ admission.bed }}. Admitted {{ admission.admitted_at|date:"j M H:i" }}: {{ admission.reason }}</p>
+{% if admission.is_active and can_edit %}<a class="btn" href="{% url 'discharge' admission.pk %}">Discharge</a>{% elif not admission.is_active %}<p class="sub">Discharged {{ admission.discharged_at|date:"j M H:i" }}.</p>{% endif %}
+{% elif can_edit and visit.status == 'with_doctor' %}
+<form method="post" action="{% url 'admit' visit.pk %}" class="stack">{% csrf_token %}
+{% include "_field.html" with field=admit_form.bed %}{% include "_field.html" with field=admit_form.reason %}<button class="btn" type="submit">Admit to bed</button></form>
+{% else %}<p class="sub">Not admitted.</p>{% endif %}</section>
+</div></div>
+{% endblock %}

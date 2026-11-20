@@ -1,0 +1,12 @@
+<div class="vitals">
+{% with flags=triage.flags %}
+<div class="vital {% if 'temperature' in flags %}out{% endif %}"><span>Temperature</span><b>{{ triage.temperature|default:"-" }}</b></div>
+<div class="vital {% if 'pulse' in flags %}out{% endif %}"><span>Pulse</span><b>{{ triage.pulse|default:"-" }}</b></div>
+<div class="vital {% if 'resp_rate' in flags %}out{% endif %}"><span>Breathing</span><b>{{ triage.resp_rate|default:"-" }}</b></div>
+<div class="vital {% if 'bp_systolic' in flags or 'bp_diastolic' in flags %}out{% endif %}"><span>Blood pressure</span><b>{{ triage.bp_systolic|default:"-" }}/{{ triage.bp_diastolic|default:"-" }}</b></div>
+<div class="vital {% if 'spo2' in flags %}out{% endif %}"><span>SpO2</span><b>{{ triage.spo2|default:"-" }}</b></div>
+<div class="vital"><span>Weight / BMI</span><b>{{ triage.weight_kg|default:"-" }} / {{ triage.bmi|default:"-" }}</b></div>
+<div class="vital"><span>Pain</span><b>{{ triage.pain|default:"-" }}</b></div>
+{% endwith %}
+</div>
+{% if triage.flag_labels %}<p><span class="badge flag">Out of range</span> {{ triage.flag_labels|join:", " }}</p>{% endif %}
