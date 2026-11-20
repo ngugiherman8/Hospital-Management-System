@@ -1,0 +1,8 @@
+# The cloud copy has a public name, so Caddy gets a normal certificate for it automatically.
+{$HMS_HOST} {
+	encode gzip
+	reverse_proxy web:8000
+	log {
+		output stdout
+	}
+}

@@ -1,1 +1,11 @@
-
+# HTTPS for the hospital network. "tls internal" makes Caddy its own certificate authority, so no internet or
+# public domain is needed. Copy its root certificate to each workstation once (see README, "HTTPS on the
+# hospital network"). Set HMS_HOST to the name staff type, for example hms.hospital.local.
+{$HMS_HOST:hms.local} {
+	tls internal
+	encode gzip
+	reverse_proxy web:8000
+	log {
+		output stdout
+	}
+}
