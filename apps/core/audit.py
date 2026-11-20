@@ -1,98 +1,114 @@
-"""Automatic audit trail.
+"""Audit trail: who changed what, and when.
 
-Any model that subclasses AuditedModel gets create/update/delete entries written
-for free. Views, prints and emergency overrides are logged with log_event().
+Models that inherit from `AuditedModel` are logged automatically on create,
+update and delete. Reads of sensitive records are logged with `log_access`.
+The current user and IP address come from `CurrentUserMiddleware`.
 """
 
-import threading
+import contextvars
+import datetime
+import decimal
+import uuid
 
-from django.contrib.contenttypes.models import ContentType
-from django.db import models
 from django.db.models.signals import post_delete, post_save, pre_save
-from django.dispatch import receiver
 
-_state = threading.local()
+_current_user = contextvars.ContextVar("audit_user", default=None)
+_current_ip = contextvars.ContextVar("audit_ip", default=None)
 
 
 def set_context(user=None, ip=None):
-    _state.user = user
-    _state.ip = ip
+    return _current_user.set(user), _current_ip.set(ip)
 
 
-def get_user():
-    user = getattr(_state, "user", None)
+def reset_context(tokens):
+    _current_user.reset(tokens[0])
+    _current_ip.reset(tokens[1])
+
+
+def current_user():
+    user = _current_user.get()
     return user if getattr(user, "is_authenticated", False) else None
 
 
-def get_ip():
-    return getattr(_state, "ip", None)
+def current_ip():
+    return _current_ip.get()
 
 
-class AuditedModel(models.Model):
-    """Abstract base: changes are written to the audit log automatically."""
-
-    audit_exclude = ()
-
-    class Meta:
-        abstract = True
+def _jsonable(value):
+    if hasattr(value, "name") and hasattr(value, "storage"):  # an uploaded file: log its name only
+        return value.name
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (decimal.Decimal, uuid.UUID)):
+        return str(value)
+    return value
 
 
 def _snapshot(instance):
     data = {}
-    for f in instance._meta.concrete_fields:
-        if f.name in instance.audit_exclude or getattr(f, "auto_now", False):
-            continue  # auto timestamps change on every save and are not real edits
-        data[f.name] = str(f.value_from_object(instance))
+    for field in instance._meta.concrete_fields:
+        if field.name == "updated_at" or field.name in getattr(instance, "audit_exclude", ()):
+            continue
+        data[field.name] = _jsonable(field.value_from_object(instance))
     return data
 
 
-def log_event(action, obj=None, *, reason="", changes=None, needs_review=False, user=None, ip=None):
+def _write(action, instance, changes):
     from .models import AuditLog
 
-    return AuditLog.objects.create(
-        user=user or get_user(),
+    AuditLog.objects.create(
+        user=current_user(),
+        ip_address=current_ip(),
         action=action,
-        content_type=ContentType.objects.get_for_model(obj) if obj is not None else None,
-        object_id=str(obj.pk) if obj is not None else "",
-        object_repr=str(obj)[:200] if obj is not None else "",
-        changes=changes or {},
-        reason=reason,
-        ip_address=ip or get_ip(),
-        needs_review=needs_review,
+        model_label=instance._meta.label,
+        object_id=str(instance.pk),
+        object_repr=str(instance)[:200],
+        changes=changes,
     )
 
 
-def log_access(obj, reason=""):
-    """Record that a user opened a clinical record."""
-    return log_event("view", obj, reason=reason)
+def log_access(instance, note=""):
+    """Record that the current user viewed or printed a record."""
+    _write("view", instance, {"note": note} if note else {})
 
 
-@receiver(pre_save)
-def _remember_old(sender, instance, **kwargs):
-    if not isinstance(instance, AuditedModel):
+def _pre_save(sender, instance, raw=False, **kwargs):
+    if raw or not _audited(instance):
         return
     instance._audit_old = None
-    if instance.pk and not kwargs.get("raw"):
-        old = sender._default_manager.filter(pk=instance.pk).first()
-        if old:
+    if instance.pk:
+        old = sender._base_manager.filter(pk=instance.pk).first()
+        if old is not None:
             instance._audit_old = _snapshot(old)
 
 
-@receiver(post_save)
-def _audit_save(sender, instance, created, **kwargs):
-    if not isinstance(instance, AuditedModel) or kwargs.get("raw"):
+def _post_save(sender, instance, created, raw=False, **kwargs):
+    if raw or not _audited(instance):
         return
     new = _snapshot(instance)
     if created:
-        log_event("create", instance, changes={k: [None, v] for k, v in new.items()})
+        _write("create", instance, {k: {"new": v} for k, v in new.items()})
         return
     old = getattr(instance, "_audit_old", None) or {}
-    diff = {k: [old.get(k), v] for k, v in new.items() if old.get(k) != v}
-    if diff:
-        log_event("update", instance, changes=diff)
+    changes = {k: {"old": old.get(k), "new": v} for k, v in new.items() if old.get(k) != v}
+    if changes:
+        _write("update", instance, changes)
 
 
-@receiver(post_delete)
-def _audit_delete(sender, instance, **kwargs):
-    if isinstance(instance, AuditedModel):
-        log_event("delete", instance, changes=_snapshot(instance))
+def _post_delete(sender, instance, **kwargs):
+    if _audited(instance):
+        _write("delete", instance, _snapshot(instance))
+
+
+pre_save.connect(_pre_save, dispatch_uid="audit_pre_save")
+post_save.connect(_post_save, dispatch_uid="audit_post_save")
+post_delete.connect(_post_delete, dispatch_uid="audit_post_delete")
+
+
+def _audited(instance):
+    return isinstance(instance, (AuditedModel, AppendOnlyModel))
+
+
+# Imported last: models import this module, so avoid a circular import at load.
+from .appendonly import AppendOnlyModel  # noqa: E402
+from .models import AuditedModel  # noqa: E402
