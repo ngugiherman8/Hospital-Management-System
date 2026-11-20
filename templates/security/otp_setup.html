@@ -1,1 +1,9 @@
-
+{% extends "base.html" %}
+{% block title %}Set up two-factor sign-in{% endblock %}
+{% block content %}
+<div class="login card"><h1>Set up two-factor sign-in</h1>
+<p class="sub">Administrators need a second step after the password. Open an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, FreeOTP), choose "enter a setup key", and type:</p>
+<p><code style="font-size:18px;letter-spacing:2px">{{ secret }}</code></p>
+<p class="sub">Account name: {{ user.username }}. Keep this key private. Then type the 6-digit code the app shows.</p>
+<form method="post" class="stack">{% csrf_token %}{% include "_field.html" with field=form.code %}<button class="btn primary" type="submit">Turn on</button></form></div>
+{% endblock %}
