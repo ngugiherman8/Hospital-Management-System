@@ -5,6 +5,6 @@ from .models import Drug
 
 @admin.register(Drug)
 class DrugAdmin(admin.ModelAdmin):
-    list_display = ("name", "strength", "form", "default_route", "price", "is_active")
-    search_fields = ("name",)
-    list_filter = ("form", "is_active")
+    list_display = ("generic_name", "strength", "form", "route", "price", "is_active")
+    list_filter = ("is_active", "form")
+    search_fields = ("generic_name",)

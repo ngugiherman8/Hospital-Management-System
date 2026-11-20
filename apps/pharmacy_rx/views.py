@@ -1,70 +1,49 @@
 from django.contrib import messages
-from django.shortcuts import get_object_or_404, redirect, render
-from django.views import View
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
+from django.shortcuts import get_object_or_404, redirect
+from django.utils import timezone
+from django.views.decorators.http import require_POST
 
-from apps.clinical.workspace import VisitPostView
-from apps.core.permissions import RoleRequiredMixin
+from apps.accounts.models import Role
+from apps.appointments.models import Appointment
+from apps.clinical.views import EDITABLE, _clinic_ok
+from apps.core.permissions import role_required
 
-from .forms import PrescriptionForm
-from .models import Prescription
-
-
-class PrescriptionAddView(VisitPostView):
-    def act(self, request):
-        form = PrescriptionForm(request.POST, patient=self.visit.patient, visit=self.visit)
-        if not form.is_valid():
-            return self.invalid(request, rx_form=form)
-        d = form.cleaned_data
-        warned = bool(form.allergy_conflict)
-        Prescription.objects.create(
-            visit=self.visit,
-            drug=d["drug"],
-            dose=d["dose"],
-            units_per_dose=d["units_per_dose"],
-            route=d["route"] or d["drug"].default_route,
-            frequency=d["frequency"],
-            days=d["days"],
-            allergy_warning=warned,
-            allergy_acknowledged_by=request.user if warned else None,
-            allergy_override_reason=d["override_reason"] if warned else "",
-            prescribed_by=request.user,
-        )
-        return redirect(self.back)
+from .forms import PrescribeForm
+from .models import Prescription, PrescriptionItem
 
 
-class PrescriptionCancelView(VisitPostView):
-    def act(self, request, rx_pk):
-        rx = get_object_or_404(Prescription, pk=rx_pk, visit=self.visit)
-        if rx.status == Prescription.Status.PENDING:
-            rx.status = Prescription.Status.CANCELLED
-            rx.save()
+@role_required(Role.DOCTOR, Role.DENTIST)
+@require_POST
+def prescribe(request, pk):
+    visit = get_object_or_404(Appointment.objects.select_related("patient"), pk=pk)
+    consultation = getattr(visit, "consultation", None)
+    if visit.status not in EDITABLE or consultation is None or not _clinic_ok(request.user, visit):
+        raise PermissionDenied
+    form = PrescribeForm(request.POST, patient=visit.patient)
+    if form.is_valid():
+        data = form.cleaned_data
+        try:
+            with transaction.atomic():
+                prescription = consultation.prescriptions.filter(dispensing_status="pending").order_by(
+                    "-id"
+                ).first() or Prescription.objects.create(consultation=consultation, prescribed_by=request.user)
+                acknowledged = form.needs_acknowledgement
+                PrescriptionItem.objects.create(
+                    prescription=prescription,
+                    drug=data["drug"],
+                    dose=data["dose"],
+                    frequency=data["frequency"],
+                    days=data["days"],
+                    quantity=data["quantity"],
+                    allergy_acknowledged_by=request.user if acknowledged else None,
+                    allergy_acknowledged_at=timezone.now() if acknowledged else None,
+                )
+        except ValidationError as exc:
+            messages.error(request, " ".join(exc.messages))
         else:
-            messages.error(request, "This prescription has already been dispensed.")
-        return redirect(self.back)
-
-
-class PrescriptionPrintView(RoleRequiredMixin, View):
-    allowed_roles = ("doctor", "nurse", "pharmacist")
-
-    def get(self, request, pk):
-        from apps.clinical.models import Visit
-        from apps.core.audit import log_event
-
-        visit = get_object_or_404(Visit.objects.select_related("patient", "doctor"), pk=pk)
-        items = visit.prescriptions.exclude(status="cancelled").select_related("drug")
-        log_event("print", visit, reason="Prescription")
-        return render(request, "pharmacy_rx/print.html", {"visit": visit, "patient": visit.patient, "items": items})
-
-
-class PrescriptionListView(RoleRequiredMixin, View):
-    """Prescriptions waiting for the pharmacy. Shows only what the pharmacy needs: no notes or results."""
-
-    allowed_roles = ("pharmacist", "doctor", "nurse")
-
-    def get(self, request):
-        waiting = (
-            Prescription.objects.filter(status="pending", visit__status__in=["open", "closed"])
-            .select_related("drug", "visit__patient")
-            .order_by("prescribed_at")
-        )
-        return render(request, "pharmacy_rx/list.html", {"prescriptions": waiting})
+            messages.success(request, f"{data['drug']} added to the prescription.")
+    else:
+        messages.error(request, " ".join(e for errs in form.errors.values() for e in errs))
+    return redirect("visit_detail", pk=visit.pk)

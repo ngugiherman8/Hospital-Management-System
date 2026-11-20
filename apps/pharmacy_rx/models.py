@@ -1,97 +1,79 @@
-from decimal import Decimal
+import re
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
-from apps.core.audit import AuditedModel
+from apps.clinical.models import Consultation
+from apps.core.models import AuditedModel
 
 
-class Drug(models.Model):
-    """Formulary entry. Stock batches attach to this in the pharmacy module (Phase 3)."""
-
-    class Route(models.TextChoices):
-        ORAL = "oral", "by mouth"
-        IV = "iv", "intravenous"
-        IM = "im", "intramuscular"
-        SC = "sc", "subcutaneous"
-        TOPICAL = "topical", "on the skin"
-        INHALED = "inhaled", "inhaled"
-        OTHER = "other", "other"
-
-    name = models.CharField(max_length=120, help_text="Generic name, e.g. Paracetamol")
-    strength = models.CharField(max_length=40, help_text="e.g. 500 mg")
-    form = models.CharField(max_length=30, help_text="tablet, capsule, syrup, injection ...")
-    default_route = models.CharField(max_length=10, choices=Route.choices, default=Route.ORAL)
-    price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Placeholder until Phase 3")
-    allergy_keys = models.CharField(
-        max_length=200,
-        blank=True,
-        help_text="Comma-separated words that trigger a warning if found in a patient's allergies.",
+class Drug(AuditedModel):
+    generic_name = models.CharField(max_length=150)
+    strength = models.CharField(max_length=60, blank=True)
+    form = models.CharField(max_length=60, blank=True, help_text="Tablet, syrup, injection...")
+    route = models.CharField(max_length=40, blank=True, default="Oral")
+    price = models.DecimalField("Price (placeholder)", max_digits=10, decimal_places=2, default=0)
+    reorder_level = models.PositiveIntegerField(
+        default=20, help_text="Warn the pharmacy when stock falls to this many units (placeholder until counted)."
     )
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["name", "strength"]
-        unique_together = [("name", "strength", "form")]
-
-    @property
-    def label(self):
-        return f"{self.name} {self.strength} {self.form}"
-
-    def allergy_conflict(self, allergies_text: str) -> str:
-        """The matching allergy word, if this drug conflicts with the patient's recorded allergies."""
-        text = (allergies_text or "").lower()
-        keys = [self.name.lower()] + [k.strip().lower() for k in self.allergy_keys.split(",") if k.strip()]
-        return next((k for k in keys if k and k in text), "")
+        ordering = ["generic_name", "strength"]
+        constraints = [models.UniqueConstraint(fields=["generic_name", "strength", "form"], name="unique_drug_entry")]
 
     def __str__(self):
-        return self.label
+        return " ".join(p for p in (self.generic_name, self.strength, self.form) if p)
+
+    def matches_allergy(self, allergies):
+        """True when the patient's allergy text names this drug (any word of its generic name, 4+ letters)."""
+        words = {w for w in re.split(r"[^a-z]+", (allergies or "").lower()) if len(w) >= 4}
+        names = {w for w in re.split(r"[^a-z]+", self.generic_name.lower()) if len(w) >= 4}
+        return bool(words & names)
 
 
 class Prescription(AuditedModel):
-    class Frequency(models.TextChoices):
-        STAT = "stat", "Once now"
-        OD = "od", "Once a day"
-        BD = "bd", "Twice a day"
-        TDS = "tds", "3 times a day"
-        QDS = "qds", "4 times a day"
-
-    PER_DAY = {"stat": 1, "od": 1, "bd": 2, "tds": 3, "qds": 4}
-
-    class Status(models.TextChoices):
-        PENDING = "pending", "Waiting for pharmacy"
+    class Dispensing(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PARTIAL = "partial", "Part dispensed"
         DISPENSED = "dispensed", "Dispensed"
-        CANCELLED = "cancelled", "Cancelled"
 
-    visit = models.ForeignKey("clinical.Visit", on_delete=models.CASCADE, related_name="prescriptions")
-    drug = models.ForeignKey(Drug, on_delete=models.PROTECT)
-    dose = models.CharField(max_length=40, help_text="e.g. 1 g")
-    units_per_dose = models.DecimalField(max_digits=5, decimal_places=1, default=1)
-    route = models.CharField(max_length=10, choices=Drug.Route.choices, default=Drug.Route.ORAL)
-    frequency = models.CharField(max_length=4, choices=Frequency.choices, default=Frequency.TDS)
-    days = models.PositiveSmallIntegerField(default=3)
-    quantity = models.DecimalField(max_digits=7, decimal_places=1, default=0)
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
-    allergy_warning = models.BooleanField(default=False, help_text="The drug matched a recorded allergy")
-    allergy_acknowledged_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
-    )
-    allergy_override_reason = models.CharField(max_length=200, blank=True)
+    consultation = models.ForeignKey(Consultation, on_delete=models.PROTECT, related_name="prescriptions")
     prescribed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    prescribed_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        ordering = ["prescribed_at", "id"]
-
-    @staticmethod
-    def compute_quantity(units_per_dose, frequency, days):
-        return Decimal(units_per_dose) * Prescription.PER_DAY[frequency] * int(days)
-
-    def save(self, *args, **kwargs):
-        if self._state.adding:
-            self.quantity = self.compute_quantity(self.units_per_dose, self.frequency, self.days)
-        super().save(*args, **kwargs)
+    dispensing_status = models.CharField(
+        max_length=10, db_index=True, choices=Dispensing.choices, default=Dispensing.PENDING
+    )
 
     def __str__(self):
-        return f"{self.drug.label}, {self.dose} {self.get_frequency_display()} for {self.days} days"
+        return f"Prescription {self.pk} for {self.consultation}"
+
+
+class PrescriptionItem(AuditedModel):
+    prescription = models.ForeignKey(Prescription, on_delete=models.PROTECT, related_name="items")
+    drug = models.ForeignKey(Drug, on_delete=models.PROTECT, related_name="+")
+    dose = models.CharField(max_length=80)
+    frequency = models.CharField(max_length=80)
+    days = models.PositiveSmallIntegerField()
+    quantity = models.PositiveIntegerField()
+    allergy_warning = models.BooleanField(default=False, editable=False)
+    allergy_acknowledged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", editable=False
+    )
+    allergy_acknowledged_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.drug}: {self.dose}, {self.frequency}, {self.days} days"
+
+    def save(self, *args, **kwargs):
+        patient = self.prescription.consultation.appointment.patient
+        self.allergy_warning = self.drug.matches_allergy(patient.allergies)
+        if self.allergy_warning and not self.allergy_acknowledged_by_id:
+            raise ValidationError("This patient has a recorded allergy to this drug. Acknowledge the warning to save.")
+        if self.allergy_acknowledged_by_id and not self.allergy_acknowledged_at:
+            self.allergy_acknowledged_at = timezone.now()
+        super().save(*args, **kwargs)
