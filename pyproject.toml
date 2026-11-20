@@ -1,3 +1,12 @@
+[project]
+name = "hospital-management-system"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.0",
+    # add everything else your project imports, see below
+]
+
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.test_settings"
 python_files = ["tests/test_*.py", "test_*.py"]
