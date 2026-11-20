@@ -1,0 +1,88 @@
+# The hospital server. Start with:  docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+# Everything restarts by itself after a power cut or reboot, and logs rotate so the disk does not fill.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hms}
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:?set POSTGRES_OWNER_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OWNER_USER} -d ${POSTGRES_DB:-hms}"]
+      interval: 10s
+      retries: 10
+    # No published port: only the website and worker can reach the database.
+
+  web:
+    build: .
+    restart: unless-stopped
+    logging: *logging
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      MEDIA_ROOT: /app/media
+      HMS_MODE: local
+    volumes:
+      - media:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/app/deploy/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/ops/health/', timeout=5).status == 200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    logging: *logging
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      MEDIA_ROOT: /app/media
+      HMS_MODE: local
+      BACKUP_DIR: /backups
+      BACKUP_KEY_FILE: /run/secrets/backup_key
+    volumes:
+      - media:/app/media
+      - ${BACKUP_DIR_HOST:?set BACKUP_DIR_HOST to a folder on the second disk}:/backups
+      - ${BACKUP_KEY_FILE_HOST:?set BACKUP_KEY_FILE_HOST to the backup passphrase file}:/run/secrets/backup_key:ro
+    depends_on:
+      web:
+        condition: service_started
+    command: ["python", "manage.py", "run_worker"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      HMS_HOST: ${HMS_HOST:-hms.local}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  media:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,12 @@
+# Practice copy for training. Run on a SEPARATE computer from the real server, with its own .env and its own data:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.training.yml --env-file .env up -d --build
+# It shows a red "TRAINING COPY" banner, never syncs, never backs up, and does not ask administrators for 2FA.
+services:
+  web:
+    environment:
+      HMS_MODE: training
+      TWO_FACTOR_REQUIRED: "false"
+  worker:
+    environment:
+      HMS_MODE: training
+      TWO_FACTOR_REQUIRED: "false"

@@ -1,136 +1,194 @@
 # Hospital & Clinic Management System
 
-Django + PostgreSQL. This repository holds **Phase 1 (Foundation)** of the project plan: project setup, CI,
-users and roles, audit log, patient registry, appointments and today's queue.
+Django + PostgreSQL system for a small hospital. This repository holds **Phase 1 (foundation)**, **Phase 2 (clinical)** and **Phase 2B (imaging, antenatal and postnatal care, dental)**, **Phase 3 (billing and stock)** and **Phase 4 (hybrid deployment and hardening)** of the project plan:
+staff sign-in with roles, an audit trail, the patient registry, appointments with a daily queue, and the clinical record
+(triage, notes and diagnoses, lab orders and results, prescriptions, wards and admissions).
 
-## Run locally (development)
+## Run it
+
+### With Docker (recommended for the hospital server)
 
 ```bash
-python -m venv venv && . venv/bin/activate
-pip install -r requirements-dev.txt
-# PostgreSQL must be running; defaults: db/user/password = hms/hms/hms on localhost
-python manage.py migrate
-python manage.py seed_demo          # demo clinics and one user per role (password ChangeMe-12345)
-python manage.py runserver
+cp .env.example .env          # then edit DJANGO_SECRET_KEY and passwords
+docker compose up --build
 ```
 
-Sign in as `reception1`, `nurse1`, `doctor1`, `admin1` and so on. **Never run `seed_demo` in production.**
-
-## Run on the hospital server (Docker)
+The app is at http://localhost:8000. Create the first administrator:
 
 ```bash
-cp .env.example .env     # set DJANGO_SECRET_KEY and POSTGRES_PASSWORD first
-docker compose up -d --build
 docker compose exec web python manage.py createsuperuser
 ```
 
-Services: `db` (PostgreSQL 16), `redis`, `web` (gunicorn), `worker` and `beat` (Celery: SMS reminders, no-show sweep).
-Health check: `GET /health/`. Nightly backup: `scripts/backup.sh` (encrypted dump; copy it to the cloud afterwards).
-`DJANGO_SSL_REDIRECT=true` expects HTTPS in front of the app (reverse proxy); set it to `false` only for LAN testing.
-
-## Tests and CI
+### For development
 
 ```bash
-ruff check . && pytest
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env && set -a && . ./.env && set +a    # needs PostgreSQL running (see POSTGRES_* in .env)
+python manage.py migrate
+python manage.py seed_demo      # one demo user per role, password: demo-password-123 (DJANGO_DEBUG only)
+python manage.py seed_clinical  # placeholder lab tests, drugs and wards; replace with the hospital's own lists
+python manage.py runserver
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, a migrations-up-to-date check and the tests against a
-PostgreSQL service, then builds the Docker image.
+Demo sign-ins: `admin`, `reception`, `nurse`, `doctor`, `lab`, `pharmacist`, `cashier`.
 
-## What is built
+### Checks (the same ones CI runs)
 
-### Phase 1: foundation
-Users and roles, audit log, login history, patient registry with duplicate detection (search by name, hospital number,
-ID or phone), appointments, SMS reminder task, and today's queue. Security: automatic sign-out after 30 minutes idle,
-lockout after 5 failed sign-ins in 15 minutes, and two-factor sign-in (authenticator app) for administrators. Two-factor is
-on by default in production; set `ADMIN_TWO_FACTOR=false` only while testing. Details are in `apps/core`, `apps/patients`
-and `apps/appointments`.
+```bash
+ruff check . && ruff format --check .
+python manage.py makemigrations --check --dry-run
+pytest
+```
 
-### Phase 2: clinical module
+## What is in Phase 1
 
-| Area | App | What it does |
-| --- | --- | --- |
-| Triage | `clinical` | Vitals with out-of-range flags, BMI, pain score, complaint and priority. Nurses edit; doctors and reception view |
-| Consultation | `clinical` | History, examination and plan (versioned, never overwritten), ICD-10 search, outcome (home, admit, refer), review date. Doctors edit; nurses view |
-| Orders and results | `orders` | Test catalogue (price, normal range, sample type), orders numbered `LAB-2026-000123`, lab work list, results, corrections that add a new result and keep the old one |
-| Prescriptions | `pharmacy_rx` | Drug list, dose, frequency, days, calculated quantity, allergy check with a logged acknowledgement. Pharmacists get a read-only list. Stock arrives in Phase 3 |
-| Wards and admissions | `wards` | Wards, beds (free, occupied, being cleaned), admit, transfer, discharge summary (printable), bed history. One active admission per bed and per patient, enforced by the database |
-| Patient timeline | `clinical` | All visits, diagnoses, results and medicines on one page. Doctors and nurses open it directly; others need a logged break-glass override |
-
-**Visit status** (`apps/appointments/models.py`, `TRANSITIONS`) is the single place that says who may take which step and
-what must be true first: save triage, emergency fast-track from reception (reason required, audited), call in, send to
-lab (needs an order), return from lab (needs every test resulted or cancelled), complete (needs a diagnosis and an outcome
-of home or refer), admit (needs an admission), discharge (needs a summary). The queue is ordered emergency, urgent,
-routine, then arrival.
-
-**Who can do what**
-
-| Screen | Can change | Can view |
-| --- | --- | --- |
-| Triage | Nurse | Doctor, reception |
-| Consultation, diagnosis, tests, prescription | Doctor | Nurse |
-| Lab work list and results | Lab (procedures: doctor or nurse) | Doctor, nurse |
-| Prescription list | Doctor (prescribing) | Nurse, pharmacist |
-| Ward board | Nurse (release cleaned beds) | Doctor, reception |
-| Admit and discharge | Doctor | Nurse |
-| Transfer | Nurse | Doctor |
-| Patient timeline | Nobody edits | Doctor, nurse |
-
-Administrators can do everything. Reception, cashier and pharmacist never see notes or result text.
-
-Printouts: prescription, lab result, referral letter and discharge summary (each print is written to the audit log).
-
-### Phase 3: billing and pharmacy (in progress)
-
-| Step | Status | What it does |
-| --- | --- | --- |
-| 1. Price lists and charges | Built | `ServiceItem` and a price per payer type (cash, SHA, private, corporate; cash price is the fallback). Draft charges appear on their own from clinical events: registration (first visit), consultation finished, each test ordered, each bed day, each dispensed medicine. Each event is charged once, ever |
-| 2. Invoices | Built | Gap-free `INV-2026-000123` numbers, total worked out from the lines, draft, open, part-paid, paid, void. Cashier adds or removes lines on a draft, finalises, prints. Administrator issues credit notes and voids |
-| 3. Payments and receipts | Built | Cash, M-Pesa (typed code), card, insurer; part payments; inpatient deposits; receipts `RCT-...`; refunds are negative payments approved by an administrator (`RFD-...`). M-Pesa prompt and callback are built: each provider transaction becomes one payment however often it is sent |
-| 4. Insurer and SHA claims | Not built | |
-| 5. Pharmacy and stock | Not built | Dispensing, batches, expiry and reorder alerts. The billing side is ready: a prescription marked dispensed is charged automatically |
-| 6. End of day | Not built | Cash-up and stock-take |
-
-Prices must be set by an administrator in `/admin/` under Service items (each has a price per payer type). Run
-`python manage.py sync_service_items` after adding tests or drugs so they can be priced. A charge with no price shows
-"No price set" and blocks finalising the invoice. `seed_sample_data` (testing only) loads sample prices.
-
-M-Pesa: the cashier can type the transaction code now. For automatic prompts set `MPESA_CONSUMER_KEY`,
-`MPESA_CONSUMER_SECRET`, `MPESA_SHORTCODE`, `MPESA_PASSKEY`, `MPESA_CALLBACK_TOKEN` and `MPESA_CALLBACK_BASE`
-(see `.env.example`). The callback address is `/billing/mpesa/callback/<token>/`. The prompt code has been tested only against a
-stand-in for Safaricom, not the real service.
-
-### Status against the build instructions
-
-| Phase | Status |
+| Area | What it does |
 | --- | --- |
-| 1 Foundation | Complete, apart from items the instructions leave to later: SMS provider, FHIR-style API |
-| 2A Core clinical | Complete: triage, consultation, orders and results, prescriptions, wards, printouts. Still open: the full ICD-10 list (needs the hospital's licensed file; load with `import_icd10`), and catalogue maintenance is through the admin site rather than dedicated screens |
-| 2B Imaging, antenatal and postnatal, dental | **Not built.** Needs the radiographer, radiologist, midwife and dentist roles |
-| 3 Billing and pharmacy | Steps 1 to 3 built; steps 4 to 6 not built |
-| 4, 5 | Not started |
+| `apps.accounts` | Custom user with a role: administrator, receptionist, nurse, doctor, lab technician, pharmacist, cashier. Admins can do everything; other roles only their own actions. |
+| `apps.core` | Append-only audit log (who created, changed, deleted or viewed what, with old and new values and IP address). Gap-free number sequences. Role decorators. |
+| `apps.patients` | Patient registry: hospital number (`HN-000001`), Kenyan phone normalisation, duplicate detection (same ID or phone, or same name and date of birth), search, edit. |
+| `apps.appointments` | Walk-ins and booked visits, daily queue numbers (`A-001`), doctor double-booking check, and a status workflow (booked, waiting for triage, waiting for doctor, with doctor, completed, did not come, cancelled) where each step is limited to the right role. |
 
-### How this differs from the Phase 2 instructions
+Models that inherit `AuditedModel` are logged automatically. Record views are logged with `log_access(obj)`.
+Audit entries cannot be edited or deleted, in code or in the admin.
 
-The instructions assume a Phase 1 with some helpers; here is how each maps to what exists.
+## What is in Phase 2
 
-- `accounts` app: users, roles and departments live in `core`.
-- `AuditedModel` is in `apps.core.audit`; `log_access(obj)` and `role_required(...)` were added; `Sequence.next(name)` and `Sequence.next_number(prefix)` were added to `core` and are used for order and admission numbers.
-- The visit is `clinical.Visit` (linked to the queue entry). It carries the triage fields and the consultation outcome, so there is no separate `TriageRecord` or `Consultation` table. `VitalSigns` holds readings (triage and ward rounds). `ClinicalNote` is the versioned note (`NoteVersion`), `VisitDiagnosis` is `Diagnosis`.
-- Each ordered test is one `Order` row (no separate order header and item); `Result` rows are never edited.
-- Result flags are normal, high, low, and abnormal (for yes/no style results such as a malaria test).
-- Printing: the discharge summary has a print view. Prescription, lab result and referral letters are not built yet.
-- Reception, cashier and pharmacist see the ward board and (pharmacist) the prescription list, not admission records.
+| Area | What it does |
+| --- | --- |
+| `apps.clinical` | Triage vitals with out-of-range flags (proposed ranges, to be signed off by the clinical lead), consultation with versioned notes (a save never overwrites), ICD-10 diagnoses (starter list, free entry allowed) and an outcome (go home, admit, refer). |
+| `apps.orders` | Test catalogue, orders with gap-free numbers (`LAB-2026-000001`), lab work list, result entry with auto flag from the normal range. A correction adds a new result and keeps the old one. |
+| `apps.pharmacy_rx` | Drug list and prescriptions with an allergy check that must be acknowledged. Dispensing stays "pending" until Phase 3. |
+| `apps.wards` | Wards, beds, admit, transfer and discharge with a summary. A database constraint allows one active admission per bed and per patient. |
 
-### Assumptions to confirm (from the instructions' open decisions)
-Hand-typed lab results, free-text notes with Plan, adult vital-sign ranges only (paediatric ranges need clinical sign-off),
-a starter formulary and test catalogue (edit in the admin), four starter wards.
-Load a full ICD-10 list with `python manage.py import_icd10 file.csv` (columns `code,title`).
+Visit status now also has "Awaiting results" and "Admitted". Each move has a role and a condition (for example triage must
+be saved before "Waiting for doctor"); both live in `apps/appointments/models.py` (`TRANSITIONS`, `CONDITIONS`). After
+all tests are resulted, the lab or the doctor can return the visit to "With doctor". The queue puts emergencies first,
+then urgent, then routine. Reception can send an emergency straight to a doctor with a reason, which is kept on the visit
+and in the audit log. The patient page shows a timeline of visits, diagnoses and results to nurses and doctors only, and
+each clinical record opened is logged as a view.
+
+## What is in Phase 2B
+
+| Area | What it does |
+| --- | --- |
+| `apps.imaging` | Modalities and imaging catalogue as data (DICOM code, room), imaging orders next to lab tests with a clinical reason and safety questions (pregnancy for radiation studies, contrast allergy and kidney problems for contrast studies), accession numbers (`IMG-2026-000001`), radiographer work list (ordered, arrived, images done), versioned reports (preliminary, final locked, addendum with a reason), critical-finding alerts until the ordering clinician acknowledges, and JPEG or PDF attachments. |
+| `apps.maternity` | Pregnancy episode with due date and gestation from the last menstrual period, antenatal contacts (never edited) with danger-sign and blood-pressure flags, delivery summary, newborn record with its own hospital number linked to the mother, postnatal contacts for mother and baby, and a due and missed list. The contact schedule is data (Administration). |
+| `apps.dental` | FDI tooth chart (append only), visit record with medical checks, treatment plan with estimate and recorded consent, procedures with anaesthetic note, and completed items marked ready for billing. Dental X-rays are ordered through imaging. |
+
+New roles: dentist, midwife, radiographer, radiologist. Dental visits skip triage; a midwife runs maternal and child
+health visits; dentists and midwives can only open visits of their own clinic. Pregnancy records (which can hold HIV
+status) are limited to midwives, doctors and administrators, and every view is logged. Nurses do not see them, which is
+stricter than the "nurse can view" line in the Phase 2B table; change it if the hospital decides otherwise.
+
+Run `python manage.py seed_clinical` for placeholder modalities, scans, dental procedures and the WHO-style contact
+schedule (8 antenatal and 4 postnatal contacts). Confirm the schedule the hospital follows before go-live.
+
+**Not built (needs equipment or later phases):** the image server and web viewer (set `IMAGING_VIEWER_URL` to show an
+"Open in viewer" link once one exists), sending a worklist to scanners, billing charges for imaging, dental and contacts
+(Phase 3 reads `ready_for_billing` on completed dental items and will add the others), labour-ward chart, immunisation,
+family planning, multiple births (one baby per delivery), and Ministry of Health antenatal returns. Uploaded scan
+printouts are stored under `MEDIA_ROOT` (default `media/`); back that folder up with the database.
+
+## What is in Phase 3
+
+Billing, insurer and SHA claims, pharmacy and stock (`apps/billing`, `apps/stock`).
+
+- **Prices.** `ServiceItem` (registration, consultations, every test and scan, drugs, dental procedures, bed days,
+  antenatal and postnatal contacts) with a price per payer type. A payer with no price of its own pays the self-pay
+  price. Prices change in Administration (administrators only). `python manage.py seed_billing` adds a placeholder price
+  list, **every price in it is a placeholder**.
+- **Automatic charges** go onto the visit's draft invoice, once each: registration (first visit only), consultation
+  done, lab test ordered, scan when the images are done, dental procedure done, antenatal and postnatal contact saved,
+  each completed bed night (`python manage.py post_bed_nights` daily, and at discharge), and drugs when dispensed.
+  A cancelled test comes off a draft invoice; after finalising it raises an alert for the cashier. A service with no
+  price never blocks care: it raises an alert on the invoice.
+- **Invoices.** Gap-free number given at finalising, drafts have none. The cashier adds or removes lines before
+  finalising and prints. After that nothing changes: a mistake is a void (administrator, with a reason, only when
+  nothing is paid) or a refund. Totals are always worked out from the lines and payments.
+- **Payments.** Cash, M-Pesa (the cashier types the code), card, insurer, deposit. Receipt numbers, part payments,
+  refunds as negative payments approved by an administrator. A repeated M-Pesa code is refused by the database.
+  `POST /billing/mpesa/confirm/` accepts a confirmation `{invoice_number, code, amount}` with header
+  `X-Mpesa-Secret`; it is off until `MPESA_CALLBACK_SECRET` is set, and a repeat creates no second payment.
+  It is **not connected to Safaricom**: that needs the hospital's Daraja access.
+- **Claims.** Made from a finalised SHA, insurer or corporate invoice. Statuses draft, submitted, approved, rejected,
+  paid. Export a month as one CSV (drafts become submitted). A rejected claim is corrected and goes out again in the
+  next export. Marking a claim paid records an insurer payment on the invoice.
+- **Stock.** Suppliers, purchase orders, goods receipts, batches (batch, expiry, unit cost). Quantity on hand is
+  always calculated from append-only movements (receive, dispense, adjust, expired, return). Dispensing takes from the
+  earliest-expiring usable batch, never from an expired one, never more than is on hand, and locks the batches so two
+  pharmacists cannot take the same stock. It adds the charge and marks the prescription part dispensed or dispensed.
+  Warnings for stock at or under the reorder level and batches expiring within 90 days. Prescribers see stock in the
+  drug list. Adjustments and write-offs need a reason. The stock-take screen compares counted with the system and
+  saves differences as adjustments.
+- **End of day.** Each cashier counts per method against what the system expects and signs; a difference needs an
+  explanation; payments cannot be added after the cashier closes. Administrators see all cash-ups and a day report that
+  checks the money ledger and the stock movements.
+
+Placeholders to confirm with the hospital: the payer list (taken from the patient record), the placeholder prices, the
+default reorder level (20 units for every drug), registration charged once per patient, claim file layout (a generic
+CSV, not the current SHA format), and the receipt and invoice print layouts.
+
+Known limits: a deposit is an ordinary part payment on one invoice (nothing carries across invoices); patient co-pay
+for insured visits is not modelled; credit notes for a finalised invoice are a void plus a new invoice; supplier
+payments are not tracked.
+
+## Who can do what
+
+| Action | Reception | Nurse | Doctor | Other staff |
+| --- | --- | --- | --- | --- |
+| Register and edit patients, book visits | Yes | No | No | No |
+| View patients, view queue | Yes | Yes | Yes | Yes |
+| Check in a booked patient, cancel | Yes | No | No | No |
+| Send patient from triage to doctor | No | Yes | No | No |
+| Call patient in, finish consultation | No | No | Yes | No |
+| Save triage | No | Yes | No | No |
+| Notes, diagnoses, orders, prescriptions, admit, discharge | No | No | Yes | No |
+| Transfer between beds | No | Yes | No | No |
+| Enter lab results | No | No | No | Lab technician |
+| See notes, results, timeline | No | Yes | Yes | No |
+| Order imaging | No | No | Yes | Dentist, midwife in their own clinic |
+| Take images, confirm safety questions | No | No | No | Radiographer |
+| Write imaging reports | No | No | No | Radiologist |
+| Pregnancy and postnatal records | No | No | Yes | Midwife |
+| Dental chart and treatment plan | No | No | View only | Dentist |
+| View invoices, take payments, edit lines before finalising, claims, own cash-up | No | No | No | Cashier (administrator too) |
+| Void an invoice, approve a refund, change prices, see all cash-ups and the day report | No | No | No | Administrator only |
+| Dispense, receive stock, purchase orders, adjustments (with a reason), stock-take | No | No | No | Pharmacist (administrator too) |
+| See stock levels | No | Yes | Yes | Pharmacist, dentist, midwife |
+
+## Phase 4: running it for real
+
+- `HMS_MODE=local` (hospital server, default) or `cloud` (read-only copy for reports). See `docs/runbook.md`.
+- Sync: every save is queued in the same transaction (`sync_outbox`), a worker sends it to the cloud, the cloud applies
+  each change once. Page: **Sync status** (`/sync/status/`). Health: `/ops/health/`. Manager report: `/ops/reports/`.
+- Commands: `run_worker`, `run_checks`, `backup_db`, `restore_db`, `apply_db_grants`, `prepare_cloud`, `create_cloud_user`.
+- New role **Manager**: cloud and local day report, no clinical or billing edits.
+- Security: lockout, 2FA for administrators and managers, limited database account. See `docs/security.md`.
+- Drills and what is still to be tried on real equipment: `docs/drills.md`.
+
+## Phase 5: pilot and go-live
+
+- Read `docs/golive.md`. Commands: `import_patients`, `patient_sample`, `load_setup`, `check_setup`, `seed_training`.
+- `HMS_MODE=training` is a separate practice copy (red banner, no sync, no backups).
+- Pages: Problems, Paper forms (all staff); Paper vs system, Go or no-go, Training, Set-up check, Access review, Weekly review
+  (manager and administrator; only an administrator records agreements and attendance).
+- New accounts must choose their own password at first sign-in.
+- One-page guides per role: `docs/guides/`.
+
+## Settings
+
+All settings come from environment variables (see `.env.example`). With `DJANGO_DEBUG` off, the app refuses to start
+without `DJANGO_SECRET_KEY`, forces HTTPS and secure cookies. Staff are signed out after 30 minutes of inactivity.
+`HOSPITAL_NAME` and `HOSPITAL_NUMBER_PREFIX` customise the screens and patient numbers.
 
 ## Not built yet
 
-- Real SMS provider: `SMS_BACKEND` defaults to a console logger.
-- SHA / insurer cover verification, claims, dispensing and stock, end-of-day cash-up (rest of Phase 3).
-- Imaging, antenatal and postnatal care, dental (Phase 2B).
-- Radiology image storage, HR and payroll: still open scope items in the plan.
-- Cloud replication (Phase 4).
+Live M-Pesa prompts and online SHA submission (they need the hospital's access);
+a screen to send non-clinical cloud requests (such as appointment requests) down to the hospital, sync of user group/permission links, pruning of old sync rows, a QR code for 2FA setup. Not yet done for Phase 2: printouts (prescription, discharge summary, lab
+result), a referral letter, the full ICD-10 list, and a screen to maintain the test catalogue and drug list (use
+Administration for now).
+
+Before go-live: confirm data protection registration and health information rules with a lawyer or the hospital's
+compliance officer, set a strong `DJANGO_SECRET_KEY`, and put the server behind HTTPS.

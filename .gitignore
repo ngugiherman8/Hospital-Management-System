@@ -1,8 +1,9 @@
+.venv/
 __pycache__/
 *.pyc
 .env
-venv/
 staticfiles/
 .pytest_cache/
 .ruff_cache/
-backups/
+*.sqlite3
+media/

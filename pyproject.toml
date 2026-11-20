@@ -1,32 +1,17 @@
-[project]
-name = "hms"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = [
-    "Django>=5.2,<5.3",
-    "djangorestframework>=3.16",
-    "django-htmx>=1.23",
-    "psycopg[binary]>=3.2",
-    "celery>=5.5",
-    "redis>=5.2",
-    "gunicorn>=23.0",
-    "whitenoise>=6.9",
-    "pyotp>=2.9",
-    "segno>=1.6",
-]
-
-[tool.uv]
-package = false
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.test_settings"
+python_files = ["tests/test_*.py", "test_*.py"]
+addopts = "-q"
+filterwarnings = ["ignore:No directory at:UserWarning"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py313"
 extend-exclude = ["migrations"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "DJ"]
-ignore = ["DJ001", "DJ008", "DJ012"]
+select = ["E", "F", "I", "B", "UP", "DJ"]
+ignore = ["DJ001"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
-"apps/clinical/catalogs.py" = ["E501"]
-"apps/core/management/commands/seed_sample_data.py" = ["E501"]

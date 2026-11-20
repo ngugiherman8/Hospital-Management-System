@@ -1,0 +1,58 @@
+# The cloud copy: read-only website for reports, fed by the hospital server. Start with:
+#   docker compose -f docker-compose.cloud.yml --env-file .env.cloud up -d --build
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hms}
+      POSTGRES_USER: ${POSTGRES_OWNER_USER:?set POSTGRES_OWNER_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OWNER_USER} -d ${POSTGRES_DB:-hms}"]
+      interval: 10s
+      retries: 10
+
+  web:
+    build: .
+    restart: unless-stopped
+    logging: *logging
+    env_file: .env.cloud
+    environment:
+      POSTGRES_HOST: db
+      HMS_MODE: cloud
+      TWO_FACTOR_REQUIRED: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/app/deploy/entrypoint.sh"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      HMS_HOST: ${HMS_HOST:?set HMS_HOST to the cloud site's public name}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile.cloud:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
