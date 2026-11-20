@@ -1,166 +1,117 @@
-from datetime import timedelta
+import datetime
 
 from django.contrib import messages
-from django.db import transaction
+from django.core.exceptions import PermissionDenied
 from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views import View
 from django.views.decorators.http import require_POST
 
-from apps.core.audit import log_event
-from apps.core.permissions import FRONT_DESK, FRONT_DESK_AND_CLINICAL, RoleRequiredMixin
+from apps.accounts.models import Role
+from apps.core.permissions import role_required
 from apps.patients.models import Patient
-from apps.patients.views import phone_search_q
 
 from .forms import AppointmentForm
-from .models import STAGE_GROUPS, Appointment, AppointmentStatus, Clinic, QueueEntry, Stage, TransitionError
+from .models import Appointment, Status, TransitionBlocked
+
+STAFF = (
+    Role.RECEPTION, Role.NURSE, Role.DOCTOR, Role.LAB, Role.PHARMACIST, Role.CASHIER,
+    Role.DENTIST, Role.MIDWIFE, Role.RADIOGRAPHER, Role.RADIOLOGIST,
+)  # fmt: skip
 
 
-class QueueView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK_AND_CLINICAL + ("lab", "pharmacist", "cashier")
+def _queue_moves(visit, user):
+    """Buttons the queue shows. Moves that need a form (triage, admit, finish) live on their own screens."""
+    hidden = {Status.ADMITTED, Status.AWAITING_RESULTS}
+    if visit.status == Status.WAITING_TRIAGE:
+        hidden.add(Status.WAITING_DOCTOR)  # the triage screen does this when it saves
+    if visit.status in (Status.WITH_DOCTOR, Status.ADMITTED):
+        hidden.add(Status.COMPLETED)  # needs a diagnosis or a discharge summary
+    return [s for s in visit.allowed_next(user) if s not in hidden]
 
-    def get(self, request):
-        today = timezone.localdate()
-        entries = QueueEntry.objects.filter(queue_date=today).select_related("patient", "clinic", "visit")
-        counts = entries.aggregate(
-            triage=Count("id", filter=Q(stage=Stage.WAITING_TRIAGE)),
-            doctor=Count("id", filter=Q(stage=Stage.WAITING_DOCTOR)),
-            seen_by_doctor=Count("id", filter=Q(stage=Stage.WITH_DOCTOR)),
-            done=Count("id", filter=Q(stage=Stage.DONE)),
-        )
-        tab = request.GET.get("tab", "all")
-        # Emergency first, then urgent, then routine; within each, first come first served.
-        rank = Case(
-            When(visit__priority="emergency", then=Value(0)),
-            When(visit__priority="urgent", then=Value(1)),
-            default=Value(2),
-            output_field=IntegerField(),
-        )
-        shown = entries.exclude(stage=Stage.DONE).annotate(rank=rank).order_by("rank", "number")
-        if tab in STAGE_GROUPS:
-            shown = shown.filter(stage__in=STAGE_GROUPS[tab])
-        q = request.GET.get("q", "").strip()
-        if q:
-            shown = shown.filter(
-                Q(patient__first_name__icontains=q)
-                | Q(patient__last_name__icontains=q)
-                | Q(patient__hospital_number__icontains=q)
-                | Q(patient__phone__icontains=q)
-                | Q(patient__in=Patient.objects.filter(phone_search_q(q)))
+
+@role_required(*STAFF)
+def appointment_list(request):
+    try:
+        day = datetime.date.fromisoformat(request.GET.get("date", ""))
+    except ValueError:
+        day = timezone.localdate()
+    stage = request.GET.get("stage", "")
+    appointments = (
+        Appointment.objects.filter(visit_date=day)
+        .select_related("patient", "doctor", "triage")
+        .annotate(
+            rank=Case(
+                When(Q(triage__priority="emergency") | ~Q(emergency_reason=""), then=Value(0)),
+                When(triage__priority="urgent", then=Value(1)),
+                default=Value(2),
+                output_field=IntegerField(),
             )
-        u = request.user
-        ctx = {
-            "entries": shown,
-            "counts": counts,
-            "tab": tab,
-            "q": q,
-            "today": timezone.localdate(),
-            "is_nurse": u.has_role("nurse"),
-            "is_doctor": u.has_role("doctor"),
-            "is_reception": u.has_role("receptionist"),
-            "is_lab": u.has_role("lab"),
-            "tabs": [("all", "All"), ("triage", "Triage"), ("doctor", "Doctor"), ("lab", "Lab and pharmacy")],
-        }
-        template = "appointments/_queue_table.html" if request.htmx else "appointments/queue.html"
-        return render(request, template, ctx)
-
-
-class WalkInView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK
-
-    def post(self, request, patient_pk):
-        patient = get_object_or_404(Patient, pk=patient_pk)
-        clinic = get_object_or_404(Clinic, pk=request.POST.get("clinic"))
-        entry, created = QueueEntry.join(patient=patient, clinic=clinic)
-        if created:
-            messages.success(request, f"{patient.full_name} added to the queue as {entry.ticket}.")
-        else:
-            messages.info(request, f"{patient.full_name} is already in today's queue ({entry.ticket}).")
-        return redirect("queue")
-
-
-class FastTrackView(RoleRequiredMixin, View):
-    """Reception sends an emergency straight to a doctor with a reason. The nurse completes triage afterwards."""
-
-    allowed_roles = FRONT_DESK
-    http_method_names = ["post"]
-
-    def post(self, request, pk):
-        from apps.clinical.models import Visit
-
-        entry = get_object_or_404(QueueEntry.objects.select_related("patient"), pk=pk)
-        reason = request.POST.get("reason", "").strip()
-        try:
-            with transaction.atomic():
-                entry.apply("fast_track", request.user, reason=reason)
-                visit = Visit.for_queue_entry(entry)
-                visit.priority, visit.fast_track_reason = "emergency", reason[:200]
-                visit.save()
-                log_event("update", entry, reason=f"Emergency fast-track: {reason}")
-        except TransitionError as e:
-            messages.error(request, str(e))
-            return redirect("queue")
-        messages.warning(request, f"{entry.ticket} {entry.patient.full_name} sent straight to the doctor.")
-        return redirect("queue")
-
-
-class AppointmentListView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK_AND_CLINICAL
-
-    def get(self, request):
-        day = request.GET.get("date")
-        try:
-            day = timezone.datetime.strptime(day, "%Y-%m-%d").date() if day else timezone.localdate()
-        except ValueError:
-            day = timezone.localdate()
-        start = timezone.make_aware(timezone.datetime.combine(day, timezone.datetime.min.time()))
-        qs = Appointment.objects.filter(starts_at__gte=start, starts_at__lt=start + timedelta(days=1)).select_related(
-            "patient", "doctor", "clinic"
         )
-        if request.user.role == "doctor":
-            qs = qs.filter(doctor=request.user)
-        return render(request, "appointments/list.html", {"appointments": qs, "day": day})
+        .order_by("rank", "arrived_at", "queue_number", "scheduled_for")
+    )
+    counts = dict(appointments.values_list("status").annotate(n=Count("id")))
+    if stage in Status.values:
+        appointments = appointments.filter(status=stage)
+    rows = [(a, _queue_moves(a, request.user)) for a in appointments]
+    return render(
+        request,
+        "appointments/list.html",
+        {
+            "rows": rows,
+            "day": day,
+            "is_today": day == timezone.localdate(),
+            "stage": stage,
+            "statuses": Status,
+            "counts": counts,
+            "waiting_triage": counts.get(Status.WAITING_TRIAGE, 0),
+            "waiting_doctor": counts.get(Status.WAITING_DOCTOR, 0),
+            "with_doctor": counts.get(Status.WITH_DOCTOR, 0) + counts.get(Status.AWAITING_RESULTS, 0),
+            "completed": counts.get(Status.COMPLETED, 0),
+        },
+    )
 
 
-class AppointmentCreateView(RoleRequiredMixin, View):
-    allowed_roles = FRONT_DESK
-
-    def get(self, request, patient_pk):
-        patient = get_object_or_404(Patient, pk=patient_pk)
-        return render(request, "appointments/form.html", {"form": AppointmentForm(), "patient": patient})
-
-    def post(self, request, patient_pk):
-        patient = get_object_or_404(Patient, pk=patient_pk)
-        form = AppointmentForm(request.POST)
-        if form.is_valid():
-            appt = form.save(commit=False)
-            appt.patient, appt.created_by = patient, request.user
-            appt.save()
-            messages.success(request, "Appointment booked. An SMS reminder will be sent the day before.")
-            return redirect("appointments:list")
-        return render(request, "appointments/form.html", {"form": form, "patient": patient})
+@role_required(Role.RECEPTION)
+def appointment_create(request, patient_pk):
+    patient = get_object_or_404(Patient, pk=patient_pk)
+    form = AppointmentForm(request.POST or None, patient=patient, initial={"kind": Appointment.Kind.WALK_IN})
+    if request.method == "POST" and form.is_valid():
+        appointment = form.save(commit=False)
+        appointment.patient = patient
+        appointment.created_by = request.user
+        appointment.save()
+        messages.success(request, f"{patient.full_name} added. {appointment.queue_label or 'Appointment booked.'}")
+        return redirect("appointment_list")
+    return render(request, "appointments/form.html", {"form": form, "patient": patient})
 
 
+@role_required(*STAFF)
 @require_POST
-def appointment_status(request, pk, action):
-    """Receptionist marks an appointment as arrived (joins the queue) or cancelled."""
-    from django.core.exceptions import PermissionDenied
+def appointment_status(request, pk):
+    appointment = get_object_or_404(Appointment, pk=pk)
+    try:
+        appointment.move_to(request.POST.get("status", ""), request.user)
+    except PermissionError:
+        raise PermissionDenied from None
+    except TransitionBlocked as exc:
+        messages.error(request, str(exc))
+        return redirect(request.POST.get("next") or "appointment_list")
+    messages.success(request, f"{appointment.patient.full_name}: {appointment.get_status_display()}.")
+    return redirect(request.POST.get("next") or "appointment_list")
 
-    if not request.user.is_authenticated:
-        return redirect("login")
-    if not request.user.has_role(*FRONT_DESK):
-        raise PermissionDenied
-    appt = get_object_or_404(Appointment, pk=pk)
-    if appt.status != AppointmentStatus.BOOKED:
-        messages.error(request, "Only booked appointments can be changed.")
-    elif action == "arrived":
-        appt.status = AppointmentStatus.ARRIVED
-        appt.save()
-        QueueEntry.join(patient=appt.patient, clinic=appt.clinic, doctor=appt.doctor, appointment=appt)
-        messages.success(request, f"{appt.patient.full_name} has arrived and joined the queue.")
-    elif action == "cancel":
-        appt.status = AppointmentStatus.CANCELLED
-        appt.save()
-        messages.info(request, "Appointment cancelled.")
-    return redirect("appointments:list")
+
+@role_required(Role.RECEPTION, Role.NURSE, Role.DOCTOR)
+@require_POST
+def appointment_fast_track(request, pk):
+    """Emergency: send a patient to the doctor before triage. The reason is kept on the visit and audited."""
+    appointment = get_object_or_404(Appointment, pk=pk)
+    try:
+        appointment.fast_track(request.user, request.POST.get("reason", ""))
+    except PermissionError:
+        raise PermissionDenied from None
+    except TransitionBlocked as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"{appointment.patient.full_name} sent to the doctor as an emergency.")
+    return redirect("appointment_list")

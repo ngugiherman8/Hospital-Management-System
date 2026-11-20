@@ -1,35 +1,35 @@
 from django import forms
-from django.utils import timezone
 
-from apps.core.models import User
+from apps.accounts.models import Role, User
 
 from .models import Appointment
 
 
 class AppointmentForm(forms.ModelForm):
+    scheduled_for = forms.DateTimeField(
+        required=False,
+        widget=forms.DateTimeInput(attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"),
+        input_formats=["%Y-%m-%dT%H:%M"],
+        label="Date and time",
+    )
+
     class Meta:
         model = Appointment
-        fields = ["clinic", "doctor", "starts_at", "reason"]
-        widgets = {"starts_at": forms.DateTimeInput(attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M")}
+        fields = ["clinic", "doctor", "kind", "scheduled_for", "reason"]
+        labels = {"kind": "Type", "reason": "Reason for visit"}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, patient=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["doctor"].queryset = User.objects.filter(role="doctor", is_active=True)
-        self.fields["starts_at"].input_formats = ["%Y-%m-%dT%H:%M"]
-
-    def clean_starts_at(self):
-        when = self.cleaned_data["starts_at"]
-        if when < timezone.now():
-            raise forms.ValidationError("Choose a time in the future.")
-        return when
+        self.patient = patient
+        self.fields["doctor"].queryset = User.objects.filter(role=Role.DOCTOR, is_active=True)
+        self.fields["doctor"].empty_label = "Any available"
 
     def clean(self):
         data = super().clean()
-        doctor, when = data.get("doctor"), data.get("starts_at")
-        if doctor and when:
-            clash = Appointment.objects.filter(doctor=doctor, starts_at=when).exclude(
-                status__in=["cancelled", "no_show"]
-            )
-            if clash.exists():
-                self.add_error("starts_at", "That doctor is already booked at this time.")
+        if data.get("kind") == Appointment.Kind.WALK_IN:
+            data["scheduled_for"] = None
         return data
+
+    def _post_clean(self):
+        self.instance.patient = self.patient
+        super()._post_clean()

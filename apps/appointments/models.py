@@ -1,242 +1,252 @@
+import datetime
+
 from django.conf import settings
-from django.db import IntegrityError, models, transaction
+from django.core.exceptions import ValidationError
+from django.db import models
 from django.utils import timezone
 
-from apps.core.audit import AuditedModel
+from apps.accounts.models import Role
+from apps.core.models import AuditedModel, Sequence
+from apps.patients.models import Patient
 
 
-class Clinic(models.Model):
-    name = models.CharField(max_length=80, unique=True)
-    slot_minutes = models.PositiveSmallIntegerField(default=15)
-    is_active = models.BooleanField(default=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self):
-        return self.name
+class Clinic(models.TextChoices):
+    GENERAL = "general", "General outpatient"
+    MCH = "mch", "Maternal and child health"
+    DENTAL = "dental", "Dental"
+    EYE = "eye", "Eye"
 
 
-class AppointmentStatus(models.TextChoices):
+class Status(models.TextChoices):
     BOOKED = "booked", "Booked"
-    ARRIVED = "arrived", "Arrived"
-    SEEN = "seen", "Seen"
-    NO_SHOW = "no_show", "No-show"
-    CANCELLED = "cancelled", "Cancelled"
-
-
-class Appointment(AuditedModel):
-    patient = models.ForeignKey("patients.Patient", on_delete=models.PROTECT, related_name="appointments")
-    clinic = models.ForeignKey(Clinic, on_delete=models.PROTECT, related_name="appointments")
-    doctor = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="appointments",
-        limit_choices_to={"role": "doctor"},
-    )
-    starts_at = models.DateTimeField(db_index=True)
-    status = models.CharField(
-        max_length=12, choices=AppointmentStatus.choices, default=AppointmentStatus.BOOKED, db_index=True
-    )
-    reason = models.CharField(max_length=200, blank=True)
-    reminder_sent_at = models.DateTimeField(null=True, blank=True)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    audit_exclude = ("reminder_sent_at",)
-
-    class Meta:
-        ordering = ["starts_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["doctor", "starts_at"],
-                condition=~models.Q(status__in=["cancelled", "no_show"]),
-                name="no_double_booking",
-            )
-        ]
-
-    def __str__(self):
-        return f"{self.patient.full_name} with {self.doctor} at {self.starts_at:%d %b %H:%M}"
-
-
-class Stage(models.TextChoices):
     WAITING_TRIAGE = "waiting_triage", "Waiting for triage"
     WAITING_DOCTOR = "waiting_doctor", "Waiting for doctor"
     WITH_DOCTOR = "with_doctor", "With doctor"
-    AT_LAB = "at_lab", "Awaiting results"
+    AWAITING_RESULTS = "awaiting_results", "Awaiting results"
     ADMITTED = "admitted", "Admitted"
-    DONE = "done", "Completed"
+    COMPLETED = "completed", "Completed"
+    NO_SHOW = "no_show", "Did not come"
+    CANCELLED = "cancelled", "Cancelled"
 
 
-class TransitionError(Exception):
-    """A visit step that is not allowed right now. The message is safe to show to staff."""
-
-
-def _visit(entry):
-    from apps.clinical.models import Visit
-
-    return Visit.objects.filter(queue_entry=entry).first()
-
-
-def _check_triage_saved(entry, **ctx):
-    v = _visit(entry)
-    return None if v and v.triaged_at else "Save the triage record first."
-
-
-def _check_fast_track(entry, **ctx):
-    return None if (ctx.get("reason") or "").strip() else "Give the reason this patient is going straight to a doctor."
-
-
-def _check_has_orders(entry, **ctx):
-    v = _visit(entry)
-    ok = v and v.orders.exclude(status="cancelled").exists()
-    return None if ok else "Order at least one test first."
-
-
-def _check_results_in(entry, **ctx):
-    v = _visit(entry)
-    if v and v.orders.filter(status__in=["ordered", "in_progress"]).exists():
-        return "Every test needs a result or must be cancelled first."
-    return None
-
-
-def _check_can_complete(entry, **ctx):
-    v = _visit(entry)
-    if not v or not v.diagnoses.exists():
-        return "Add at least one diagnosis first."
-    if v.outcome not in ("home", "refer"):
-        return "Choose 'go home' or 'refer' as the outcome."
-    if v.outcome == "refer" and not v.referred_to.strip():
-        return "Say which facility the patient is referred to."
-    return None
-
-
-def _check_admission_exists(entry, **ctx):
-    from apps.wards.models import Admission
-
-    ok = Admission.objects.filter(visit__queue_entry=entry, status="admitted").exists()
-    return None if ok else "Create the admission (choose a free bed) first."
-
-
-def _check_discharged(entry, **ctx):
-    from apps.wards.models import Admission
-
-    ok = Admission.objects.filter(visit__queue_entry=entry, status="discharged").exclude(summary="").exists()
-    return None if ok else "Save the discharge summary first."
-
-
-class Transition:
-    def __init__(self, sources, target, roles, check=None):
-        self.sources, self.target, self.roles, self.check = frozenset(sources), target, tuple(roles), check
-
-
-# The single place that says who may move a visit to which step, and what must be true first.
+# status -> {next status: roles allowed to make the change}
 TRANSITIONS = {
-    "save_triage": Transition({Stage.WAITING_TRIAGE}, Stage.WAITING_DOCTOR, ("nurse",), _check_triage_saved),
-    "fast_track": Transition({Stage.WAITING_TRIAGE}, Stage.WAITING_DOCTOR, ("receptionist",), _check_fast_track),
-    "call_in": Transition({Stage.WAITING_DOCTOR}, Stage.WITH_DOCTOR, ("doctor",)),
-    "send_to_lab": Transition({Stage.WITH_DOCTOR}, Stage.AT_LAB, ("doctor",), _check_has_orders),
-    "lab_complete": Transition({Stage.AT_LAB}, Stage.WITH_DOCTOR, ("lab", "doctor", "nurse"), _check_results_in),
-    "complete": Transition({Stage.WITH_DOCTOR}, Stage.DONE, ("doctor",), _check_can_complete),
-    "admit": Transition({Stage.WITH_DOCTOR}, Stage.ADMITTED, ("doctor",), _check_admission_exists),
-    "discharge": Transition({Stage.ADMITTED}, Stage.DONE, ("doctor",), _check_discharged),
+    Status.BOOKED: {
+        Status.WAITING_TRIAGE: (Role.RECEPTION,),
+        Status.NO_SHOW: (Role.RECEPTION,),
+        Status.CANCELLED: (Role.RECEPTION,),
+    },
+    Status.WAITING_TRIAGE: {
+        Status.WAITING_DOCTOR: (Role.NURSE,),
+        Status.CANCELLED: (Role.RECEPTION,),
+    },
+    Status.WAITING_DOCTOR: {
+        Status.WITH_DOCTOR: (Role.DOCTOR,),
+        Status.CANCELLED: (Role.RECEPTION,),
+    },
+    Status.WITH_DOCTOR: {
+        Status.AWAITING_RESULTS: (Role.DOCTOR,),
+        Status.ADMITTED: (Role.DOCTOR,),
+        Status.COMPLETED: (Role.DOCTOR,),
+    },
+    Status.AWAITING_RESULTS: {
+        # The lab sends the patient back once every test has a result; the doctor can too
+        # (for example after cancelling the tests that were still open).
+        Status.WITH_DOCTOR: (Role.LAB, Role.DOCTOR, Role.RADIOLOGIST),
+    },
+    Status.ADMITTED: {
+        Status.COMPLETED: (Role.DOCTOR,),
+    },
+}
+
+# Moves that depend on the clinic: (clinic, from, to) -> extra roles. Dental patients skip triage and go
+# straight to the dentist; antenatal and postnatal visits are run by the midwife.
+CLINIC_MOVES = {
+    ("dental", Status.BOOKED, Status.WAITING_DOCTOR): (Role.RECEPTION,),
+    ("dental", Status.WAITING_TRIAGE, Status.WAITING_DOCTOR): (Role.RECEPTION,),
+    ("dental", Status.WAITING_DOCTOR, Status.WITH_DOCTOR): (Role.DENTIST,),
+    ("dental", Status.WITH_DOCTOR, Status.AWAITING_RESULTS): (Role.DENTIST,),
+    ("dental", Status.WITH_DOCTOR, Status.COMPLETED): (Role.DENTIST,),
+    ("dental", Status.AWAITING_RESULTS, Status.WITH_DOCTOR): (Role.DENTIST,),
+    ("mch", Status.WAITING_DOCTOR, Status.WITH_DOCTOR): (Role.MIDWIFE,),
+    ("mch", Status.WITH_DOCTOR, Status.AWAITING_RESULTS): (Role.MIDWIFE,),
+    ("mch", Status.WITH_DOCTOR, Status.COMPLETED): (Role.MIDWIFE,),
+    ("mch", Status.AWAITING_RESULTS, Status.WITH_DOCTOR): (Role.MIDWIFE,),
+}
+
+ACTIVE_STATUSES = [
+    Status.BOOKED,
+    Status.WAITING_TRIAGE,
+    Status.WAITING_DOCTOR,
+    Status.WITH_DOCTOR,
+    Status.AWAITING_RESULTS,
+    Status.ADMITTED,
+]
+
+
+class TransitionBlocked(Exception):
+    """The role is allowed to make this move, but something must be recorded first."""
+
+
+def _need_triage(visit):
+    if visit.clinic == Clinic.DENTAL:
+        return None  # triage is optional for dental patients
+    if getattr(visit, "triage", None) is None:
+        return "Save the triage record first."
+
+
+def _need_an_order(visit):
+    live = ("ordered", "sample_taken", "in_progress", "result_in")
+    if not visit.orders.filter(items__status__in=live).exists():
+        return "Order at least one test first."
+
+
+def _need_all_results(visit):
+    if visit.orders.filter(items__status__in=("ordered", "sample_taken", "in_progress")).exists():
+        return "Every ordered test and scan needs a result (a preliminary report for scans) or must be cancelled first."
+
+
+def _need_diagnosis_and_outcome(visit):
+    consultation = getattr(visit, "consultation", None)
+    if consultation is None or not consultation.diagnoses.exists():
+        return "Save at least one diagnosis first."
+    if consultation.outcome not in ("home", "refer"):
+        return 'Set the outcome to "go home" or "refer" first (or admit the patient).'
+
+
+def _need_admission(visit):
+    if getattr(visit, "admission", None) is None:
+        return "Admit the patient to a bed first."
+
+
+def _need_discharge(visit):
+    admission = getattr(visit, "admission", None)
+    if admission is None or admission.discharged_at is None:
+        return "Discharge the patient with a summary first."
+
+
+# (from, to) -> check that returns a message when the move is not yet allowed
+CONDITIONS = {
+    (Status.WAITING_TRIAGE, Status.WAITING_DOCTOR): _need_triage,
+    (Status.BOOKED, Status.WAITING_DOCTOR): _need_triage,
+    (Status.WITH_DOCTOR, Status.AWAITING_RESULTS): _need_an_order,
+    (Status.AWAITING_RESULTS, Status.WITH_DOCTOR): _need_all_results,
+    (Status.WITH_DOCTOR, Status.COMPLETED): _need_diagnosis_and_outcome,
+    (Status.WITH_DOCTOR, Status.ADMITTED): _need_admission,
+    (Status.ADMITTED, Status.COMPLETED): _need_discharge,
 }
 
 
-# Which stages belong to each queue filter tab
-STAGE_GROUPS = {
-    "triage": [Stage.WAITING_TRIAGE],
-    "doctor": [Stage.WAITING_DOCTOR, Stage.WITH_DOCTOR],
-    "lab": [Stage.AT_LAB],
-}
+class Appointment(AuditedModel):
+    class Kind(models.TextChoices):
+        WALK_IN = "walk_in", "Walk-in"
+        BOOKED = "booked", "Booked"
 
-
-class QueueEntry(AuditedModel):
-    """One patient's place in today's queue (walk-in or arrived appointment)."""
-
-    patient = models.ForeignKey("patients.Patient", on_delete=models.PROTECT, related_name="queue_entries")
-    clinic = models.ForeignKey(Clinic, on_delete=models.PROTECT, related_name="queue_entries")
+    patient = models.ForeignKey(Patient, on_delete=models.PROTECT, related_name="appointments")
+    clinic = models.CharField(max_length=20, choices=Clinic.choices, default=Clinic.GENERAL)
     doctor = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="queue_entries"
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="appointments",
+        limit_choices_to={"role": Role.DOCTOR},
     )
-    appointment = models.OneToOneField(
-        Appointment, null=True, blank=True, on_delete=models.SET_NULL, related_name="queue_entry"
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.WALK_IN)
+    visit_date = models.DateField(default=timezone.localdate, db_index=True)
+    scheduled_for = models.DateTimeField(null=True, blank=True, help_text="Leave empty for walk-ins.")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.BOOKED, db_index=True)
+    queue_number = models.PositiveIntegerField(null=True, blank=True, editable=False)
+    reason = models.CharField(max_length=300, blank=True)
+    arrived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    emergency_reason = models.CharField(
+        max_length=300, blank=True, editable=False, help_text="Set when sent to a doctor before triage."
     )
-    queue_date = models.DateField(default=timezone.localdate, db_index=True)
-    number = models.PositiveIntegerField()
-    stage = models.CharField(max_length=20, choices=Stage.choices, default=Stage.WAITING_TRIAGE, db_index=True)
-    room = models.CharField(max_length=20, blank=True)
-    arrived_at = models.DateTimeField(default=timezone.now)
-    stage_changed_at = models.DateTimeField(default=timezone.now)
-    is_walk_in = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+", editable=False
+    )
 
     class Meta:
-        ordering = ["queue_date", "number"]
-        verbose_name_plural = "queue entries"
-        constraints = [
-            models.UniqueConstraint(fields=["queue_date", "number"], name="unique_ticket_per_day"),
-            models.UniqueConstraint(
-                fields=["patient", "queue_date"],
-                condition=~models.Q(stage="done"),
-                name="one_open_queue_entry_per_patient_per_day",
-            ),
-        ]
+        ordering = ["visit_date", "queue_number", "scheduled_for"]
+        indexes = [models.Index(fields=["visit_date", "status"])]
+
+    def __str__(self):
+        return f"{self.patient.full_name}, {self.visit_date:%d %b %Y}"
 
     @property
-    def ticket(self):
-        return f"A-{self.number:03d}"
+    def queue_label(self):
+        return f"A-{self.queue_number:03d}" if self.queue_number else ""
 
     @property
     def minutes_waiting(self):
-        return int((timezone.now() - self.stage_changed_at).total_seconds() // 60)
+        if self.arrived_at and self.status in (Status.WAITING_TRIAGE, Status.WAITING_DOCTOR):
+            return int((timezone.now() - self.arrived_at).total_seconds() // 60)
+        return None
 
-    @classmethod
-    def join(cls, *, patient, clinic, doctor=None, appointment=None):
-        """Add a patient to today's queue. Returns the existing open entry if there is one."""
-        today = timezone.localdate()
-        existing = cls.objects.filter(patient=patient, queue_date=today).exclude(stage=Stage.DONE).first()
-        if existing:
-            return existing, False
-        for _ in range(5):
-            try:
-                with transaction.atomic():
-                    last = cls.objects.filter(queue_date=today).aggregate(m=models.Max("number"))["m"] or 0
-                    entry = cls.objects.create(
-                        patient=patient,
-                        clinic=clinic,
-                        doctor=doctor,
-                        appointment=appointment,
-                        queue_date=today,
-                        number=last + 1,
-                        is_walk_in=appointment is None,
-                    )
-                return entry, True
-            except IntegrityError:
-                continue  # another receptionist took the number; try the next one
-        raise RuntimeError("Could not allocate a queue number")
+    def clean(self):
+        if self.scheduled_for:
+            self.visit_date = timezone.localtime(self.scheduled_for).date()
+            if self.pk is None and self.scheduled_for < timezone.now() - datetime.timedelta(minutes=5):
+                raise ValidationError({"scheduled_for": "Choose a time that has not passed."})
+            if self.doctor_id:
+                clash = Appointment.objects.filter(
+                    doctor_id=self.doctor_id, scheduled_for=self.scheduled_for, status__in=ACTIVE_STATUSES
+                ).exclude(pk=self.pk)
+                if clash.exists():
+                    raise ValidationError({"scheduled_for": "That doctor already has an appointment at this time."})
+        elif self.kind == self.Kind.BOOKED:
+            raise ValidationError({"scheduled_for": "Booked appointments need a date and time."})
 
-    def apply(self, action, user, **ctx):
-        """Take one step in TRANSITIONS. Raises PermissionDenied (wrong role) or TransitionError (not allowed now)."""
-        from django.core.exceptions import PermissionDenied
+    def _assign_queue_number(self):
+        if not self.queue_number:
+            self.queue_number = Sequence.next(f"queue-{self.visit_date.isoformat()}")
 
-        t = TRANSITIONS[action]
-        if not user.has_role(*t.roles):
-            raise PermissionDenied
-        if self.stage not in t.sources:
-            raise TransitionError(f"{self.ticket} is at '{self.get_stage_display()}', so that step is not available.")
-        if t.check:
-            problem = t.check(self, **ctx)
-            if problem:
-                raise TransitionError(problem)
-        self.move_to(t.target, room=ctx.get("room", ""))
-        return self
+    def save(self, *args, **kwargs):
+        if self.kind == self.Kind.WALK_IN and not self.pk:
+            # Walk-ins are in the queue straight away.
+            self.status = Status.WAITING_TRIAGE
+            self.arrived_at = timezone.now()
+            self._assign_queue_number()
+        super().save(*args, **kwargs)
 
-    def move_to(self, stage, room=""):
-        self.stage = stage
-        self.stage_changed_at = timezone.now()
-        if room:
-            self.room = room
+    def _options(self):
+        options = {to: tuple(roles) for to, roles in TRANSITIONS.get(self.status, {}).items()}
+        for (clinic, frm, to), roles in CLINIC_MOVES.items():
+            if clinic == self.clinic and frm == self.status:
+                options[to] = tuple(dict.fromkeys(options.get(to, ()) + roles))
+        return options
+
+    def allowed_next(self, user):
+        """Statuses this user may move the appointment to."""
+        return [s for s, roles in self._options().items() if user.has_role(*roles)]
+
+    def move_to(self, new_status, user):
+        if new_status not in self.allowed_next(user):
+            raise PermissionError(f"Cannot change from {self.get_status_display()} to {Status(new_status).label}.")
+        before = self.status
+        check = CONDITIONS.get((self.status, new_status))
+        message = check(self) if check else None
+        if message:
+            raise TransitionBlocked(message)
+        self.status = new_status
+        if new_status == Status.WAITING_TRIAGE or (new_status == Status.WAITING_DOCTOR and before == Status.BOOKED):
+            self.arrived_at = timezone.now()
+            self.visit_date = timezone.localdate()
+            self._assign_queue_number()
         self.save()
 
-    def __str__(self):
-        return f"{self.ticket} {self.patient.full_name}"
+    def fast_track(self, user, reason):
+        """Send an emergency straight to a doctor before triage. The reason goes in the audit log."""
+        if self.status != Status.WAITING_TRIAGE or not user.has_role(Role.RECEPTION, Role.NURSE, Role.DOCTOR):
+            raise PermissionError("Only a patient waiting for triage can be fast-tracked.")
+        reason = (reason or "").strip()
+        if not reason:
+            raise TransitionBlocked("Give a reason for sending the patient to the doctor before triage.")
+        self.status = Status.WAITING_DOCTOR
+        self.emergency_reason = reason[:300]
+        self.save()
+
+    @property
+    def is_emergency(self):
+        triage = getattr(self, "triage", None)
+        return bool(self.emergency_reason) or (triage is not None and triage.priority == "emergency")
