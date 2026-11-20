@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Go or no-go{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Go-live</div><h1>Go or no-go</h1><p class="sub">Check every item the day before each department switches, and write down who agreed. A department is ready only when all eight are agreed.{% if critical_open %} <b>{{ critical_open }} critical problem(s) still open.</b>{% endif %}</p></div></div>
+{% for dept in board %}<section class="card"><div class="row"><h2>{{ dept.name }}</h2>{% if dept.go %}<span class="badge ok">Go</span>{% else %}<span class="badge draft">Not yet</span>{% endif %}</div>
+<table><tbody>{% for key, text, g in dept.items %}<tr><td style="width:55%">{{ text }}</td>
+<td>{% if g %}<span class="badge ok">Agreed</span> {{ g.agreed_by }}, {{ g.agreed_on }}{% if g.note %}<div class="sub" style="font-size:13px">{{ g.note }}</div>{% endif %}
+{% if can_record %}<form method="post" style="display:inline">{% csrf_token %}<button class="btn small" name="withdraw" value="{{ g.pk }}" type="submit">Withdraw</button></form>{% endif %}
+{% elif can_record %}<form method="post" class="row">{% csrf_token %}<input type="hidden" name="department" value="{{ dept.code }}"><input type="hidden" name="item" value="{{ key }}"><input type="hidden" name="agreed_on" value="{{ today|date:'Y-m-d' }}"><input name="agreed_by" placeholder="Name of person who agreed" required aria-label="Name of person who agreed"><input name="note" placeholder="Note (optional)" aria-label="Note"><button class="btn small" type="submit">Agree</button></form>
+{% else %}<span class="badge draft">Not agreed</span>{% endif %}</td></tr>{% endfor %}</tbody></table></section>{% endfor %}
+<section class="card"><h2>Rollback plan</h2><p>If a critical failure cannot be fixed the same day, the named decision-maker (the hospital manager, with the project lead) sends the affected department back to paper. Nothing already entered is deleted. When the problem is fixed, the paper records from the gap are entered before the department switches back. Print the downtime forms from <a href="{% url 'forms_index' %}">Paper forms</a>.</p></section>
+{% endblock %}

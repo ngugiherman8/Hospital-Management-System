@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Set-up check{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Go-live</div><h1>Set-up check</h1><p class="sub">{% if ready %}Everything needed is in place.{% else %}Something is missing. Fix the red items before go-live.{% endif %}</p></div></div>
+<section class="card"><table><tbody>{% for ok, label, detail in results %}<tr><td style="width:90px">{% if ok %}<span class="badge ok">OK</span>{% else %}<span class="badge flag">Fix</span>{% endif %}</td><td>{{ label }}{% if detail %}<div class="sub" style="font-size:13px">{{ detail }}</div>{% endif %}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

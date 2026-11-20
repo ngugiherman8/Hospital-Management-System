@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Weekly review{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Go-live</div><h1>Weekly review</h1><p class="sub">For the weekly meeting with the hospital manager.</p></div></div>
+<section class="card"><h2>The week</h2><table><thead><tr><th>Day</th><th>Visits</th><th>Billed (KES)</th><th>Collected, net (KES)</th><th>Ledger</th></tr></thead><tbody>{% for d in week %}<tr><td>{{ d.day }}</td><td>{{ d.visits }}</td><td>{{ d.billed }}</td><td>{{ d.net }}</td><td>{% if d.ledger_ok %}<span class="badge ok">Balances</span>{% else %}<span class="badge flag">Check</span>{% endif %}</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Open problems ({{ issues|length }}{% if overdue %}, {{ overdue|length }} overdue{% endif %})</h2><table><tbody>{% for i in issues %}<tr><td><span class="badge {{ i.severity }}">{{ i.get_severity_display }}</span></td><td>{{ i.title }}</td><td>{% if i.overdue %}<span class="badge flag">Overdue</span>{% endif %}</td></tr>{% empty %}<tr><td>None.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Pilot days with unexplained differences</h2><p>{% for d in unmatched_pilot_days %}{{ d }}{% if not forloop.last %}, {% endif %}{% empty %}None.{% endfor %}</p></section>
+<section class="card"><h2>Drugs at or under reorder level ({{ low_stock|length }})</h2><p>{% for r in low_stock %}{{ r.drug }}: {{ r.on_hand }}{% if not forloop.last %}; {% endif %}{% empty %}None.{% endfor %}</p></section>
+<section class="card"><p><a href="{% url 'audit_review' %}">Access review</a> · <a href="{% url 'pilot_days' %}">Paper against system</a> · <a href="{% url 'setup_check' %}">Set-up check</a></p></section>
+{% endblock %}

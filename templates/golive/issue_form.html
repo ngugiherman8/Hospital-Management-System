@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'issue_list' %}">Problems</a></div><h1>{{ title }}</h1><p class="sub">Do not type patient names. Use the paper number or hospital number instead.</p></div></div>
+<section class="card"><form method="post" class="stack">{% csrf_token %}{% for field in form %}{% include "_field.html" %}{% endfor %}<div class="row"><button class="btn primary" type="submit">Save</button></div></form></section>
+{% endblock %}

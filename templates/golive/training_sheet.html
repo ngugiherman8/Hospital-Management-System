@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Training sign-in sheet{% endblock %}
+{% block content %}
+<style>@media print{.noprint{display:none!important}} td{height:34px}</style>
+<div class="head"><div><h1>Training sign-in sheet</h1><p>Date: ____________ &nbsp; Department: ________________ &nbsp; Trainer: ________________</p></div><div class="row noprint"><button class="btn primary" onclick="window.print()">Print</button></div></div>
+<table style="width:100%"><thead><tr><th>Name</th><th>Role</th><th>Signature</th><th>Finished practice case without help (Y/N)</th></tr></thead><tbody>{% for i in blank_rows %}<tr><td></td><td></td><td></td><td></td></tr>{% endfor %}</tbody></table>
+{% endblock %}

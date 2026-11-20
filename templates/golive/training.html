@@ -1,1 +1,8 @@
-
+{% extends "base.html" %}
+{% block title %}Training{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Go-live</div><h1>Training attendance</h1><p class="sub">Each person finishes a practice case on the training copy without help. Print the paper sign-in sheet as well; the signed sheet is the proof.</p></div><div class="row"><a class="btn" href="{% url 'training_sheet' %}" target="_blank">Print sign-in sheet</a></div></div>
+{% if can_record %}<section class="card"><form method="post" class="stack">{% csrf_token %}{% for field in form %}{% include "_field.html" %}{% endfor %}<div class="row"><button class="btn primary" type="submit">Record</button></div></form></section>{% endif %}
+<section class="card"><h2>Not yet finished a practice case ({{ untrained|length }})</h2><p>{% for u in untrained %}{{ u.get_full_name|default:u.username }} ({{ u.get_role_display }}){% if not forloop.last %}, {% endif %}{% empty %}Everyone has.{% endfor %}</p></section>
+<section class="card"><div class="scroll"><table style="min-width:640px"><thead><tr><th>Person</th><th>Date</th><th>Topic</th><th>Without help</th><th>Trainer</th><th>Super-user</th></tr></thead><tbody>{% for s in sessions %}<tr><td>{{ s.user }}</td><td>{{ s.session_date }}</td><td>{{ s.topic }}</td><td>{% if s.completed_without_help %}Yes{% else %}No{% endif %}</td><td>{{ s.trainer }}</td><td>{% if s.is_super_user %}Yes{% endif %}</td></tr>{% empty %}<tr><td colspan="6">No sessions yet.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

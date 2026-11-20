@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ form.title }}{% endblock %}
+{% block content %}
+<style>@media print{.noprint{display:none!important}.box{break-inside:avoid}} .box{border:1px solid #444;min-height:46px;padding:4px 8px;margin:0 0 8px} .box b{font-size:12px;display:block} td,th{border:1px solid #444;padding:4px;font-size:12px} table{border-collapse:collapse;width:100%} td{height:30px}</style>
+<div class="head"><div><h1>{{ form.title }}</h1><p>{{ HOSPITAL_NAME }} · {{ form.department }} · <b>DOWNTIME FORM, enter into the system later</b></p></div><div class="row noprint"><button class="btn primary" onclick="window.print()">Print</button></div></div>
+<p>{% for h in header %}{{ h }}: ________________ &nbsp; {% endfor %}</p>
+{% if form.note %}<p><i>{{ form.note }}</i></p>{% endif %}
+{% if form.fields %}{% for f in form.fields %}<div class="box"><b>{{ f }}</b></div>{% endfor %}
+{% else %}<table><thead><tr><th>Time</th>{% for c in form.rows %}<th>{{ c }}</th>{% endfor %}<th>Staff</th></tr></thead><tbody>{% for i in blank_rows %}<tr><td></td>{% for c in form.rows %}<td></td>{% endfor %}<td></td></tr>{% endfor %}</tbody></table>{% endif %}
+{% endblock %}

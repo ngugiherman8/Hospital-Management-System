@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Access review{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Go-live</div><h1>Access review</h1><p class="sub">Last {{ days }} days. Unusual does not mean wrong: ask the person before drawing a conclusion. <a href="?days=7">7 days</a> · <a href="?days=30">30 days</a></p></div></div>
+<section class="card"><h2>Refused requests</h2><table><tbody>{% for r in denied %}<tr><td>{{ r.user__username|default:"(not signed in)" }}</td><td>{{ r.n }}</td></tr>{% empty %}<tr><td>None.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Three or more wrong passwords</h2><table><tbody>{% for r in failed %}<tr><td>{{ r.username }}</td><td>{{ r.n }}</td></tr>{% empty %}<tr><td>None.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Patient records opened between 22:00 and 06:00</h2><table><tbody>{% for v in odd_hours %}<tr><td>{{ v.timestamp|date:"Y-m-d H:i" }}</td><td>{{ v.user|default:"-" }}</td><td>{{ v.object_repr }}</td></tr>{% empty %}<tr><td>None.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>{{ threshold }} or more different patients opened by one person in a day</h2><table><tbody>{% for u, d, n in heavy %}<tr><td>{{ u|default:"-" }}</td><td>{{ d }}</td><td>{{ n }} patients</td></tr>{% empty %}<tr><td>None.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Deleted records</h2><table><tbody>{% for r in deleted %}<tr><td>{{ r.user__username|default:"-" }}</td><td>{{ r.model_label }}</td><td>{{ r.n }}</td></tr>{% empty %}<tr><td>None.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

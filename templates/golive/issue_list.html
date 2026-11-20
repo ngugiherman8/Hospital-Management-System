@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Problems{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pilot</div><h1>Problems</h1><p class="sub">Critical: fix the same day, with a workaround at once. High: 3 working days. Medium: next release. Low: backlog. These times are starting points to confirm with the hospital.</p></div>
+<div class="row"><a class="btn primary" href="{% url 'issue_create' %}">Report a problem</a></div></div>
+<section class="card">
+<div class="row"><span class="badge flag">Critical {{ counts.critical|default:0 }}</span><span class="badge urgent">High {{ counts.high|default:0 }}</span><span class="badge">Medium {{ counts.medium|default:0 }}</span><span class="badge draft">Low {{ counts.low|default:0 }}</span>
+<a class="btn small" href="?show={% if show == 'open' %}all{% else %}open{% endif %}">{% if show == 'open' %}Show all{% else %}Show open only{% endif %}</a></div>
+<div class="scroll"><table style="min-width:720px"><thead><tr><th>Problem</th><th>Severity</th><th>Where</th><th>Status</th><th>Due</th>{% if can_edit %}<th></th>{% endif %}</tr></thead><tbody>
+{% for i in issues %}<tr><td>{{ i.title }}{% if i.workaround %}<div class="sub" style="font-size:13px">Meanwhile: {{ i.workaround }}</div>{% endif %}<div class="sub" style="font-size:13px">{{ i.reported_on }}{% if i.reported_by %} by {{ i.reported_by }}{% endif %}</div></td>
+<td><span class="badge {{ i.severity }}">{{ i.get_severity_display }}</span></td><td>{{ i.get_department_display|default:"-" }}</td><td>{{ i.get_status_display }}</td>
+<td>{% if i.due_on %}{{ i.due_on }}{% if i.overdue %} <span class="badge flag">Overdue</span>{% endif %}{% else %}-{% endif %}</td>{% if can_edit %}<td><a class="btn small" href="{% url 'issue_update' i.pk %}">Update</a></td>{% endif %}</tr>
+{% empty %}<tr><td colspan="6">No problems logged.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

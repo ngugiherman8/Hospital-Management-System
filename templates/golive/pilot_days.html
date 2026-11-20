@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Paper against system{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Pilot</div><h1>Paper against system</h1><p class="sub">At the end of each pilot day, type in the paper totals. The system's own figures sit beside them. Any difference needs a reason.</p></div></div>
+<section class="card"><form method="post" class="stack">{% csrf_token %}{% for field in form %}{% include "_field.html" %}{% endfor %}<div class="row"><button class="btn primary" type="submit">Save and compare</button></div></form></section>
+{% for d in days %}<section class="card"><div class="row"><h2>{{ d.day }}: {{ d.get_department_display }}</h2>{% if d.matches %}<span class="badge ok">Matches</span>{% elif d.explanation %}<span class="badge partial">Differs, explained</span>{% else %}<span class="badge flag">Differs, not explained</span>{% endif %}</div>
+<table><thead><tr><th>Figure</th><th>Paper</th><th>System</th><th>Difference</th></tr></thead><tbody>{% for r in d.rows %}<tr><td>{{ r.label }}</td><td>{{ r.paper }}</td><td>{{ r.system }}</td><td>{{ r.difference }}</td></tr>{% endfor %}</tbody></table>
+{% if d.explanation %}<p class="sub">Reason: {{ d.explanation }}</p>{% endif %}</section>{% endfor %}
+{% endblock %}

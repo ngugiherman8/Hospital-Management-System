@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Paper forms{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Go-live</div><h1>Paper forms for downtime</h1><p class="sub">Print enough for a full day and keep them in the department. If the server is down: switch to paper, call IT, and type the paper in afterwards with the real date and time of each event.</p></div></div>
+<section class="card"><table><tbody>{% for slug, f in forms.items %}<tr><td>{{ f.title }}<div class="sub" style="font-size:13px">{{ f.department }}</div></td><td><a class="btn small" href="{% url 'form_print' slug %}" target="_blank">Open and print</a></td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}
