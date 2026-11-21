@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}My leave{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">{{ staff.staff_number }}</div><h1>My leave</h1></div></div>
+<section class="card"><h2>Balances</h2><table><thead><tr><th>Leave</th><th>Days left</th><th>Waiting for a decision</th></tr></thead><tbody>{% for b in balances %}<tr><td>{{ b.type }}</td><td>{{ b.balance }}</td><td>{{ b.pending }}</td></tr>{% endfor %}</tbody></table><p class="sub">Days count Monday to Saturday, not Sundays or public holidays.</p></section>
+<section class="card"><h2>Ask for leave</h2><form method="post" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Send request</button></form></section>
+<section class="card scroll"><h2>My requests</h2><table><thead><tr><th>Leave</th><th>From</th><th>To</th><th>Days</th><th>Status</th><th>Note</th><th></th></tr></thead><tbody>{% for r in requests %}<tr><td>{{ r.leave_type }}</td><td>{{ r.start_date }}</td><td>{{ r.end_date }}</td><td>{{ r.days }}</td><td><span class="badge {% if r.status == 'approved' %}ok{% elif r.status == 'requested' %}partial{% else %}draft{% endif %}">{{ r.get_status_display }}</span></td><td>{{ r.decision_note }}</td><td>{% if r.status == 'requested' or r.status == 'approved' %}<form method="post" action="{% url 'leave_cancel' r.pk %}">{% csrf_token %}<button class="btn small" type="submit">Cancel</button></form>{% endif %}</td></tr>{% empty %}<tr><td colspan="7">No requests yet.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

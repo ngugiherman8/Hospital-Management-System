@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Staff{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Human resources</div><h1>Staff</h1></div>{% if can_edit %}<a class="btn primary" href="{% url 'staff_create' %}">Add a staff member</a>{% endif %}</div>
+<section class="card"><form method="get" class="row"><label class="field">Search<input name="q" value="{{ q }}"></label><label class="field">Show<select name="show"><option value="current" {% if show == 'current' %}selected{% endif %}>Current staff</option><option value="left" {% if show == 'left' %}selected{% endif %}>Left</option><option value="all" {% if show == 'all' %}selected{% endif %}>Everyone</option></select></label><button class="btn" type="submit">Show</button></form></section>
+<section class="card scroll"><table><thead><tr><th>Number</th><th>Name</th><th>Department</th><th>Job</th><th>Joined</th><th></th></tr></thead><tbody>
+{% for s in rows %}<tr><td>{{ s.staff_number }}</td><td><a href="{% url 'staff_detail' s.pk %}">{{ s.full_name }}</a></td><td>{{ s.department }}</td><td>{{ s.job_title }}</td><td>{{ s.date_joined }}</td><td>{% if s.date_left %}<span class="badge draft">Left {{ s.date_left }}</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="6">No one found.</td></tr>{% endfor %}
+</tbody></table></section>
+{% endblock %}

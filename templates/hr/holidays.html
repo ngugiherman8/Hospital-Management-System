@@ -1,1 +1,7 @@
-
+{% extends "base.html" %}
+{% block title %}Public holidays{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Human resources</div><h1>Public holidays</h1><div class="sub">Holiday dates move from year to year (Easter, Eid). Enter them each year from the government notice.</div></div></div>
+<section class="card"><form method="post" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add</button></form></section>
+<section class="card"><table><thead><tr><th>Date</th><th>Name</th></tr></thead><tbody>{% for h in rows %}<tr><td>{{ h.date }}</td><td>{{ h.name }}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

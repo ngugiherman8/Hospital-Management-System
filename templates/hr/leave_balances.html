@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Leave balances{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Human resources</div><h1>Leave balances</h1></div></div>
+{% if can_edit %}<section class="card"><h2>Add a month of leave</h2><p class="sub">Adds one twelfth of each yearly entitlement for everyone on the staff list. Running a month twice does nothing.</p><form method="post" action="{% url 'leave_accrue' %}" class="row">{% csrf_token %}<label class="field">Month<input type="month" name="month" required></label><button class="btn primary" type="submit">Add leave for the month</button></form></section>
+<section class="card"><h2>Adjust a balance</h2><form method="post" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn" type="submit">Adjust</button></form></section>{% endif %}
+<section class="card scroll"><table><thead><tr><th>Name</th>{% for t in types %}<th>{{ t }}</th>{% endfor %}</tr></thead><tbody>{% for r in rows %}<tr><td><a href="{% url 'staff_detail' r.staff.pk %}">{{ r.staff.full_name }}</a></td>{% for c in r.cells %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></section>
+{% endblock %}

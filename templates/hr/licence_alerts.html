@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Licences{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Human resources</div><h1>Licences expired or running out</h1><div class="sub">Expired licences stop a person being put on the roster.</div></div></div>
+<section class="card scroll"><table><thead><tr><th>Name</th><th>Department</th><th>Body</th><th>Number</th><th>Expires</th><th></th></tr></thead><tbody>{% for l in rows %}<tr><td><a href="{% url 'staff_detail' l.staff_id %}">{{ l.staff.full_name }}</a></td><td>{{ l.staff.department }}</td><td>{{ l.get_body_display }}</td><td>{{ l.number }}</td><td>{{ l.expires_on }}</td><td>{% with st=l.status %}<span class="badge {% if st == 'due' %}partial{% else %}urgent{% endif %}">{% if st == 'due' %}Due soon{% else %}Expired{% endif %}</span>{% endwith %}</td></tr>{% empty %}<tr><td colspan="6">Nothing expiring in the next 60 days.</td></tr>{% endfor %}</tbody></table></section>
+<p class="sub">If a renewed licence is recorded, the newer one is used. Old expired rows for the same body stay in the list until you check them.</p>
+{% endblock %}
