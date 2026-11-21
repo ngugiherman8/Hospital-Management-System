@@ -28,6 +28,7 @@ from django.core.management.base import BaseCommand, CommandError
 # Management commands to run, in order, between `migrate` and `collectstatic`.
 STEPS = [
     "ensure_admin",
+    "sync_service_items",  # every drug, test and procedure gets a billable item, so nothing is dispensed unbilled
 ]
 
 
