@@ -86,6 +86,7 @@
     <summary>Help &amp; system</summary>
     <a href="{% url 'issue_list' %}" {% if 'issue' in n %}class="active"{% endif %}>Problems</a>
     <a href="{% url 'forms_index' %}" {% if 'form' in n %}class="active"{% endif %}>Paper forms</a>
+    {% if role == 'admin' or user.is_superuser %}<a href="{% url 'bulk_index' %}" {% if 'bulk' in n %}class="active"{% endif %}>Bulk import</a>{% endif %}
     {% if role == 'admin' or user.is_superuser %}<a href="{% url 'sync_status' %}" {% if n == 'sync_status' %}class="active"{% endif %}>Sync status</a>{% endif %}
     {% if user.is_staff %}<a href="{% url 'admin:index' %}">Administration</a>{% endif %}
   </details>
