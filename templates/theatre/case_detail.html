@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ case.number }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'theatre_schedule' %}">Theatre</a> / {{ case.number }}</div><h1>{{ case.procedure }}</h1><div class="sub"><a href="{% url 'patient_detail' case.patient.pk %}">{{ case.patient.full_name }}</a> ({{ case.patient.hospital_number }}) · {{ case.theatre }} · {{ case.scheduled_start|date:"D j M H:i" }} for {{ case.expected_minutes }} min · <span class="badge">{{ case.get_status_display }}</span> {% if case.urgency != 'elective' %}<span class="badge urgent">{{ case.get_urgency_display }}</span>{% endif %}</div></div></div>
+<section class="card"><h2>Team</h2><table><tbody>{% for label, u in case.team %}<tr><th>{{ label }}</th><td>{{ u }}</td></tr>{% endfor %}</tbody></table>{% if case.notes %}<p class="sub">{{ case.notes }}</p>{% endif %}</section>
+<section class="card"><h2>Safety checklist</h2>
+<form method="post" action="{% url 'theatre_action' case.pk 'checklist' %}" class="stack">{% csrf_token %}
+<label><input type="checkbox" name="consent_signed" {% if case.consent_signed %}checked{% endif %} {% if not can_work or not open %}disabled{% endif %}> Consent signed</label>
+<label><input type="checkbox" name="identity_checked" {% if case.identity_checked %}checked{% endif %} {% if not can_work or not open %}disabled{% endif %}> Patient identity and procedure confirmed</label>
+<label><input type="checkbox" name="site_marked" {% if case.site_marked %}checked{% endif %} {% if not can_work or not open %}disabled{% endif %}> Site marked (if it applies)</label>
+<label><input type="checkbox" name="fasting_confirmed" {% if case.fasting_confirmed %}checked{% endif %} {% if not can_work or not open %}disabled{% endif %}> Fasting confirmed</label>
+{% if can_work and open %}<div><button class="btn" type="submit">Save checklist</button></div>{% endif %}</form>
+{% if case.override_reason %}<p class="sub">Started without the checklist: {{ case.override_reason }}</p>{% endif %}</section>
+{% if can_work and open %}
+<section class="card"><h2>Actions</h2>
+{% if case.status == 'booked' %}<form method="post" action="{% url 'theatre_action' case.pk 'start' %}" class="row">{% csrf_token %}{% if case.urgency == 'emergency' %}<input name="override_reason" placeholder="Emergency without checklist: reason">{% endif %}<button class="btn primary" type="submit">Patient in theatre: start</button></form>{% endif %}
+{% if case.status == 'in_theatre' %}<form method="post" action="{% url 'theatre_action' case.pk 'finish' %}">{% csrf_token %}<button class="btn primary" type="submit">Operation finished</button></form>{% endif %}
+{% if case.status == 'booked' %}<form method="post" class="row">{% csrf_token %}<input name="reason" placeholder="Reason" required><button class="btn" formaction="{% url 'theatre_action' case.pk 'postpone' %}" type="submit">Postpone</button><button class="btn" formaction="{% url 'theatre_action' case.pk 'cancel' %}" type="submit">Cancel</button></form>
+<h3>Move to another time or theatre</h3><form method="post" action="{% url 'theatre_action' case.pk 'move' %}" class="row">{% csrf_token %}{% for f in move_form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn" type="submit">Move</button></form>{% endif %}</section>
+{% endif %}
+{% if case.cancel_reason %}<section class="card"><p>Reason: {{ case.cancel_reason }}</p></section>{% endif %}
+{% if case.started_at %}<section class="card"><p>Started {{ case.started_at|date:"j M H:i" }}{% if case.ended_at %}, finished {{ case.ended_at|date:"H:i" }}{% endif %}.</p></section>{% endif %}
+{% endblock %}

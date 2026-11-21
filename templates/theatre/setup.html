@@ -1,1 +1,7 @@
-
+{% extends "base.html" %}
+{% block title %}Theatre set-up{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'theatre_schedule' %}">Theatre</a></div><h1>Theatres and procedures</h1></div></div>
+<section class="card"><h2>Theatres</h2><form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="theatre">{% for f in tform %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add</button></form><ul>{% for t in theatres %}<li>{{ t }}</li>{% endfor %}</ul></section>
+<section class="card"><h2>Procedures</h2><form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="procedure">{% for f in pform %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add</button></form><table><thead><tr><th>Name</th><th>Minutes</th><th>Charged as</th></tr></thead><tbody>{% for p in procedures %}<tr><td>{{ p.name }}</td><td>{{ p.default_minutes }}</td><td>{{ p.service|default:"No price: charge by hand" }}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

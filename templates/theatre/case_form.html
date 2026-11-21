@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Book an operation{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'theatre_schedule' %}">Theatre</a></div><h1>Book an operation</h1></div></div>
+<section class="card"><form method="post" class="stack">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<div><button class="btn primary" type="submit">Book</button></div></form><p class="sub">The booking is refused if the theatre or anyone in the team is already busy, on approved leave, or has an expired licence. Emergencies are booked anyway and the clash is noted.</p></section>
+{% endblock %}
