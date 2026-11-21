@@ -3,10 +3,10 @@
 body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);font-size:15px}
 a{color:var(--primary)}a:hover{color:var(--primary-dark)}
 .shell{display:flex;flex-wrap:wrap;min-height:100vh}
-.side{flex:0 0 232px;background:var(--side);color:#E6F2F1;padding:24px 16px;display:flex;flex-direction:column;gap:4px}
+.side{flex:0 0 232px;background:var(--side);color:#E6F2F1;padding:24px 16px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;box-sizing:border-box;overflow-y:auto}
 .side .brand{display:flex;align-items:center;gap:10px;padding:0 8px 24px;font-weight:600}
 .side .mark{width:32px;height:32px;border-radius:8px;background:#E6F2F1;color:var(--side);font-weight:700;display:flex;align-items:center;justify-content:center}
-.side a{padding:12px;border-radius:8px;color:#E6F2F1;text-decoration:none}
+.side a{padding:10px 12px;border-radius:8px;color:#E6F2F1;text-decoration:none}
 .side a.active{background:rgba(255,255,255,.14);color:#fff;font-weight:600}
 .side .user{margin-top:auto;padding:16px 8px 0;border-top:1px solid rgba(255,255,255,.2);font-size:13px;color:#CFE3E1}
 .side .user strong{display:block;color:#fff}
@@ -80,3 +80,15 @@ textarea{width:100%;font:inherit;border:1px solid var(--field);border-radius:8px
 .totals b{text-align:right}
 .inline{display:inline}
 @media print{.side,.noprint{display:none!important}.main{padding:0}.card{border:0}}
+
+.side a.top{font-weight:600}
+.side details.grp{border-top:1px solid rgba(255,255,255,.12);margin-top:4px;padding-top:4px}
+.side details.grp summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:8px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#9FC4C1}
+.side details.grp summary::-webkit-details-marker{display:none}
+.side details.grp summary::after{content:"+";font-size:16px;line-height:1}
+.side details.grp[open] summary::after{content:"\2212"}
+.side details.grp summary:hover{background:rgba(255,255,255,.07);color:#fff}
+.side details.grp[open] summary{color:#fff}
+.side details.grp a{display:block;margin-left:8px;padding:8px 12px;font-size:14px}
+.side details.grp a:hover{background:rgba(255,255,255,.07)}
+@media(max-width:900px){.side{position:static;height:auto;flex-basis:100%;overflow-y:visible}}
