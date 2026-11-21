@@ -56,6 +56,19 @@
   </details>
   {% endif %}
 
+  <details class="grp">
+    <summary>Staff &amp; HR</summary>
+    <a href="{% url 'my_leave' %}" {% if n == 'my_leave' or n == 'leave_cancel' %}class="active"{% endif %}>My leave</a>
+    {% if role == 'hr' or role == 'manager' or role == 'admin' or user.is_superuser %}
+    <a href="{% url 'staff_list' %}" {% if 'staff' in n or 'contract' in n or n == 'licence_add' %}class="active"{% endif %}>Staff records</a>
+    <a href="{% url 'leave_approvals' %}" {% if n == 'leave_approvals' %}class="active"{% endif %}>Leave approvals</a>
+    <a href="{% url 'leave_balances' %}" {% if n == 'leave_balances' %}class="active"{% endif %}>Leave balances</a>
+    <a href="{% url 'licence_alerts' %}" {% if n == 'licence_alerts' %}class="active"{% endif %}>Licence alerts</a>
+    <a href="{% url 'department_list' %}" {% if n == 'department_list' %}class="active"{% endif %}>Departments</a>
+    {% endif %}
+    {% if role == 'hr' or role == 'admin' or user.is_superuser %}<a href="{% url 'leave_types' %}" {% if n == 'leave_types' or n == 'holidays' %}class="active"{% endif %}>Leave types &amp; holidays</a>{% endif %}
+  </details>
+
   {% if role == 'manager' or role == 'admin' or user.is_superuser %}
   <details class="grp">
     <summary>Management</summary>
