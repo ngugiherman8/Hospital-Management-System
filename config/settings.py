@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     "apps.maternity",
     "apps.dental",
     "apps.billing",
+    "apps.hr",
     "apps.stock",
     "apps.ops",
     "apps.golive",

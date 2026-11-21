@@ -32,6 +32,7 @@ urlpatterns = [
     path("dental/", include("apps.dental.urls")),
     path("billing/", include("apps.billing.urls")),
     path("stock/", include("apps.stock.urls")),
+    path("hr/", include("apps.hr.urls")),
     path("sync/", include("apps.sync.urls")),
     path("ops/", include("apps.ops.urls")),
     path("golive/", include("apps.golive.urls")),
