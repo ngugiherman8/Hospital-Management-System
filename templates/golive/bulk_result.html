@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{% if preview %}Preview{% else %}Import finished{% endif %}: {{ importer.title }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'bulk_index' %}">Bulk import</a> / {{ importer.title }}</div>
+<h1>{% if preview %}Preview: nothing has been saved yet{% else %}Import finished{% endif %}</h1><p class="sub">File: {{ name }}, {{ total }} rows read.</p></div></div>
+<section class="card">
+<div class="row"><span class="badge ok">New {{ counts.created }}</span><span class="badge partial">Updated {{ counts.updated }}</span><span class="badge draft">Skipped {{ counts.skipped }}</span><span class="badge flag">Problems {{ counts.error }}</span></div>
+{% if preview %}
+{% if counts.error %}<div class="alert warning">{{ counts.error }} row{{ counts.error|pluralize }} below cannot be imported. They are listed first. If you go ahead, the other {{ importable }} row{{ importable|pluralize }} are imported and these are left out.</div>{% endif %}
+<div class="row">
+{% if importable %}<form method="post" action="{% url 'bulk_confirm' importer.key %}">{% csrf_token %}<button class="btn primary" type="submit">Import {{ importable }} row{{ importable|pluralize }}</button></form>{% endif %}
+<a class="btn" href="{% url 'bulk_kind' importer.key %}">Choose another file</a></div>
+{% if not importable %}<div class="alert error">Nothing in this file can be imported. Fix the problems and upload it again.</div>{% endif %}
+{% else %}
+<div class="alert success">Done. {{ importable }} row{{ importable|pluralize }} saved.</div>
+<div class="row">{% if counts.error %}<a class="btn" href="{% url 'bulk_errors' %}">Download the problems (CSV)</a>{% endif %}<a class="btn" href="{% url 'bulk_index' %}">Import something else</a></div>
+{% endif %}
+<div class="scroll"><table style="min-width:640px"><thead><tr><th>Row</th><th>Item</th><th>Result</th><th>Details</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.row }}</td><td>{{ r.label }}</td>
+<td>{% if r.status == 'error' %}<span class="badge flag">Problem</span>{% elif r.status == 'created' %}<span class="badge ok">New</span>{% elif r.status == 'updated' %}<span class="badge partial">Updated</span>{% else %}<span class="badge draft">Skipped</span>{% endif %}</td>
+<td>{{ r.message }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% if hidden %}<p class="sub">{{ hidden }} more row{{ hidden|pluralize }} not shown. The counts above include them.</p>{% endif %}
+</section>
+{% endblock %}

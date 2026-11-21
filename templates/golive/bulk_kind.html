@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Import {{ importer.title }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'bulk_index' %}">Bulk import</a></div><h1>Import: {{ importer.title }}</h1><p class="sub">{{ importer.blurb }}</p></div></div>
+<section class="card"><h2>1. Get the template</h2>
+<p><a class="btn" href="{% url 'bulk_template' importer.key %}">Download template (CSV)</a></p>
+<div class="scroll"><table style="min-width:560px"><thead><tr><th>Column</th><th>Needed?</th><th>Notes</th></tr></thead><tbody>
+{% for name, required, note in importer.columns %}<tr><td><code>{{ name }}</code></td><td>{% if required %}<b>Yes</b>{% else %}Optional{% endif %}</td><td>{{ note }}</td></tr>{% endfor %}
+</tbody></table></div></section>
+<section class="card"><h2>2. Upload your file</h2>
+<form method="post" enctype="multipart/form-data" class="stack">{% csrf_token %}
+<label class="field">CSV file (up to 5000 rows)<input type="file" name="file" accept=".csv,text/csv" required></label>
+<button class="btn primary" type="submit">Check the file (nothing is saved yet)</button></form></section>
+{% endblock %}
