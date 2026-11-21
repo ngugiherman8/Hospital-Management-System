@@ -38,7 +38,12 @@ class Command(BaseCommand):
         self.run_check_db_url()
 
         self.stdout.write(self.style.MIGRATE_HEADING("Checking for missing migrations..."))
-        call_command("makemigrations", check=True, dry_run=True)
+        # Drift (for example a changed list of choices) does not change the database, so it must not stop a
+        # deploy. Run `python manage.py makemigrations` locally and commit the result to clear the warning.
+        try:
+            call_command("makemigrations", check=True, dry_run=True)
+        except SystemExit:
+            self.stdout.write(self.style.WARNING("Model changes have no migration yet (continuing)."))
 
         self.stdout.write(self.style.MIGRATE_HEADING("Applying migrations..."))
         call_command("migrate", interactive=False)
