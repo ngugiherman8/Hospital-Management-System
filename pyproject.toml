@@ -3,9 +3,10 @@ name = "hospital-management-system"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "django>=5.0",
-    "djangorestframework"
-    # add everything else your project imports, see below
+    "Django>=5.2,<5.3",
+    "psycopg[binary]>=3.2",
+    "gunicorn>=23.0",
+    "whitenoise>=6.7",
 ]
 
 [tool.pytest.ini_options]
