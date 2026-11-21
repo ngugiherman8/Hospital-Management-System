@@ -4,7 +4,7 @@ import os
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.core.models import User
+from apps.accounts.models import User
 
 
 class Command(BaseCommand):

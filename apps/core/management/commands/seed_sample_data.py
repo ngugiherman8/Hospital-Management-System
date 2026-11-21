@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.appointments.models import Appointment, Clinic, QueueEntry
-from apps.core.models import User
+from apps.accounts.models import User
 from apps.patients.models import InsuranceCover, Patient
 
 # (first, last, dob, sex, phone, area, payer, member, allergies)
