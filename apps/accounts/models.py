@@ -21,6 +21,8 @@ class Role(models.TextChoices):
     RADIOGRAPHER = "radiographer", "Radiographer"
     RADIOLOGIST = "radiologist", "Radiologist"
     MANAGER = "manager", "Manager (reports only)"
+    HR = "hr", "HR and payroll officer"
+    STOREKEEPER = "storekeeper", "Storekeeper"
 
 
 # Staff who run a consultation: notes, diagnoses, orders. Dentists and midwives only in their own clinic.
