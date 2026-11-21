@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Receive goods{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'store_levels' %}">General store</a></div><h1>Receive goods</h1></div></div>
+<section class="card"><form method="post" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Receive</button></form></section>
+<section class="card"><h2>Recently received</h2><table><tbody>{% for m in recent %}<tr><td>{{ m.created_at|date:"j M H:i" }}</td><td>{{ m.item.name }}</td><td>{{ m.quantity }}</td><td>{{ m.reference }}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

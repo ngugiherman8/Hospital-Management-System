@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Ask for supplies{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'requisition_list' %}">Requisitions</a></div><h1>Ask for supplies</h1></div></div>
+<section class="card"><form method="post" class="stack">{% csrf_token %}{{ form.non_field_errors }}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<div><button class="btn primary" type="submit">Send for approval</button></div></form></section>
+{% endblock %}

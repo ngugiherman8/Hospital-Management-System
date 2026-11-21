@@ -1,1 +1,8 @@
-
+{% extends "base.html" %}
+{% block title %}General store{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">General store</div><h1>Store levels</h1><div class="sub">Not for drugs: those are in Stock levels (pharmacy).</div></div>
+<div class="row">{% if can_work %}<a class="btn primary" href="{% url 'store_receive' %}">Receive goods</a><a class="btn" href="{% url 'store_item_new' %}">New item</a><a class="btn" href="{% url 'store_adjust' %}">Correct stock</a>{% endif %}<a class="btn" href="{% url 'requisition_list' %}">Requisitions</a></div></div>
+{% if low %}<div class="alert error" role="alert"><b>Running low:</b> {% for r in low %}{{ r.item.name }} ({{ r.on_hand }}){% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+<section class="card scroll"><table><thead><tr><th>Code</th><th>Item</th><th>Group</th><th>On hand</th><th>Reorder at</th><th>Value (KES)</th></tr></thead><tbody>{% for r in rows %}<tr><td>{{ r.item.code }}</td><td>{{ r.item.name }}</td><td>{{ r.item.get_category_display }}</td><td>{{ r.on_hand }} {{ r.item.unit }}{% if r.low %} <span class="badge urgent">Low</span>{% endif %}</td><td>{{ r.item.reorder_level }}</td><td>{{ r.value }}</td></tr>{% empty %}<tr><td colspan="6">No items yet.</td></tr>{% endfor %}</tbody><tfoot><tr><th colspan="5">Total value at last price paid</th><th>{{ total }}</th></tr></tfoot></table></section>
+{% endblock %}

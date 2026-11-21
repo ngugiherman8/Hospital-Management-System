@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Requisitions{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">General store</div><h1>{% if see_all %}All requisitions{% else %}My requisitions{% endif %}</h1></div><a class="btn primary" href="{% url 'requisition_new' %}">Ask for supplies</a></div>
+<section class="card scroll"><table><thead><tr><th>Number</th><th>Department</th><th>By</th><th>Status</th></tr></thead><tbody>{% for r in rows %}<tr><td><a href="{% url 'requisition_detail' r.pk %}">{{ r.number }}</a></td><td>{{ r.department }}</td><td>{{ r.requested_by }}</td><td><span class="badge {% if r.status == 'issued' %}ok{% elif r.status == 'rejected' or r.status == 'cancelled' %}draft{% else %}partial{% endif %}">{{ r.get_status_display }}</span></td></tr>{% empty %}<tr><td colspan="4">None.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}
