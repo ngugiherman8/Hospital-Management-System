@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import bulk_views, views
 
 urlpatterns = [
     path("issues/", views.issue_list, name="issue_list"),
@@ -13,6 +13,11 @@ urlpatterns = [
     path("setup/", views.setup_check, name="setup_check"),
     path("audit-review/", views.audit_review, name="audit_review"),
     path("weekly/", views.weekly_review, name="weekly_review"),
+    path("bulk/", bulk_views.bulk_index, name="bulk_index"),
+    path("bulk/problems.csv", bulk_views.bulk_errors, name="bulk_errors"),
+    path("bulk/<slug:kind>/", bulk_views.bulk_kind, name="bulk_kind"),
+    path("bulk/<slug:kind>/confirm/", bulk_views.bulk_confirm, name="bulk_confirm"),
+    path("bulk/<slug:kind>/template.csv", bulk_views.bulk_template, name="bulk_template"),
     path("forms/", views.forms_index, name="forms_index"),
     path("forms/<slug:slug>/", views.form_print, name="form_print"),
 ]
