@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}My payslips{% endblock %}
+{% block content %}
+<div class="head"><div><h1>My payslips</h1></div></div>
+<section class="card"><table><thead><tr><th>Month</th><th>Net pay (KES)</th></tr></thead><tbody>{% for s in slips %}<tr><td><a href="{% url 'payslip' s.pk %}">{{ s.run.period|date:"F Y" }}</a></td><td>{{ s.net }}</td></tr>{% empty %}<tr><td colspan="2">No payslips yet.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

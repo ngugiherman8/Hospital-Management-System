@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Payslip{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">{{ slip.run }}</div><h1>Payslip: {{ slip.staff.full_name }}</h1><div class="sub">{{ slip.staff.staff_number }} · {{ slip.staff.department }}</div></div></div>
+<section class="card"><table><thead><tr><th>Item</th><th>KES</th></tr></thead><tbody>{% for l in lines %}<tr><td>{% if l.kind == 'deduction' %}Less: {% endif %}{{ l.label }}</td><td>{{ l.amount }}</td></tr>{% endfor %}</tbody><tfoot><tr><th>Gross pay</th><th>{{ slip.gross }}</th></tr><tr><th>Net pay</th><th>{{ slip.net }}</th></tr></tfoot></table>
+<p class="sub">Taxable pay {{ slip.taxable_pay }}. Tax before relief {{ slip.tax_before_relief }}, personal relief {{ slip.relief }}. Employer also pays NSSF {{ slip.employer_nssf }} and housing levy {{ slip.employer_housing }}.</p></section>
+{% endblock %}

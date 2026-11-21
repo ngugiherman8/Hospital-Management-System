@@ -1,1 +1,11 @@
-
+{% extends "base.html" %}
+{% block title %}Pay items{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'staff_detail' staff.pk %}">{{ staff.full_name }}</a></div><h1>Allowances, deductions and one-offs</h1><div class="sub">Basic pay now: {% if contract %}{{ contract.basic_salary }}{% else %}no contract{% endif %}</div></div></div>
+<section class="card"><h2>Allowances (every month)</h2><table><tbody>{% for a in allowances %}<tr><td>{{ a.name }}</td><td>{{ a.amount }}</td><td>{{ a.taxable|yesno:"Taxable,Not taxable" }}</td><td>{{ a.start_date }} to {{ a.end_date|default:"no end" }}</td></tr>{% endfor %}</tbody></table>
+<form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="allowance">{% for f in forms.allowance %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add allowance</button></form></section>
+<section class="card"><h2>Deductions (every month)</h2><table><tbody>{% for d, paid in deductions %}<tr><td>{{ d.name }}</td><td>{{ d.amount }}</td><td>{% if d.total_owed %}Owed {{ d.total_owed }}, paid back {{ paid }}{% endif %}</td><td>{{ d.start_date }} to {{ d.end_date|default:"no end" }}</td></tr>{% endfor %}</tbody></table>
+<form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="deduction">{% for f in forms.deduction %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add deduction</button></form></section>
+<section class="card"><h2>One-off items (overtime, bonus, corrections)</h2><table><tbody>{% for a in adjustments %}<tr><td>{{ a.period|date:"F Y" }}</td><td>{{ a.get_kind_display }}</td><td>{{ a.description }}</td><td>{{ a.amount }}</td></tr>{% endfor %}</tbody></table>
+<form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="adjustment">{% for f in forms.adjustment %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add item</button></form></section>
+{% endblock %}

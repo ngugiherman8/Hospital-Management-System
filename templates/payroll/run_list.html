@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Payroll{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Payroll</div><h1>Pay runs</h1></div><a class="btn" href="{% url 'pay_rates' %}">Statutory rates</a></div>
+{% if can_prepare %}<section class="card"><form method="post" class="row">{% csrf_token %}<label class="field">Start a run for month<input type="month" name="month" required></label><button class="btn primary" type="submit">Start</button></form></section>{% endif %}
+<section class="card"><table><thead><tr><th>Month</th><th>Status</th></tr></thead><tbody>{% for r in runs %}<tr><td><a href="{% url 'pay_run' r.pk %}">{{ r.period|date:"F Y" }}</a></td><td><span class="badge {% if r.status == 'approved' %}ok{% else %}partial{% endif %}">{{ r.get_status_display }}</span></td></tr>{% empty %}<tr><td colspan="2">No runs yet.</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}
