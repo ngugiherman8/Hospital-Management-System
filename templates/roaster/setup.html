@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Roster set-up{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Work planning</div><h1>Shifts and minimum cover</h1><div class="sub">At least {{ min_rest }} hours of rest are needed between shifts (setting ROSTER_MIN_REST_HOURS).</div></div></div>
+<section class="card"><h2>Shifts</h2><form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="type">{% for f in type_form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add shift</button></form><table><thead><tr><th>Name</th><th>Code</th><th>Hours</th></tr></thead><tbody>{% for t in types %}<tr><td>{{ t.name }}</td><td>{{ t.code }}</td><td>{{ t.start_time|time:"H:i" }} to {{ t.end_time|time:"H:i" }} ({{ t.hours }} h)</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Minimum cover</h2><form method="post" class="row">{% csrf_token %}<input type="hidden" name="which" value="cover">{% for f in cover_form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Save</button></form><table><tbody>{% for c in cover %}<tr><td>{{ c.department }}</td><td>{{ c.shift_type.name }}</td><td>at least {{ c.minimum }}</td></tr>{% endfor %}</tbody></table></section>
+{% endblock %}

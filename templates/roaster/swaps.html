@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Swaps{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Work planning</div><h1>Shift swaps waiting for approval</h1></div></div>
+<section class="card scroll"><table><thead><tr><th>Shift</th><th>From</th><th>To</th><th>Reason</th><th></th></tr></thead><tbody>{% for w in rows %}<tr><td>{{ w.shift.date|date:"D j M" }}, {{ w.shift.shift_type }}</td><td>{{ w.shift.staff.full_name }}</td><td>{{ w.to_staff.full_name }}</td><td>{{ w.reason }}</td><td><form method="post" class="row">{% csrf_token %}<button class="btn small primary" formaction="{% url 'swap_respond' w.pk 'approve' %}" type="submit">Approve</button><button class="btn small" formaction="{% url 'swap_respond' w.pk 'reject' %}" type="submit">Reject</button></form></td></tr>{% empty %}<tr><td colspan="5">Nothing waiting.</td></tr>{% endfor %}</tbody></table><p class="sub">Approval checks leave, licence, overlap and rest again for the new person.</p></section>
+{% endblock %}

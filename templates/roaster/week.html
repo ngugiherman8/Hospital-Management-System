@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Roster{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Work planning</div><h1>Roster{% if dept %}: {{ dept }}{% endif %}</h1><div class="sub">Week starting {{ start|date:"D j M Y" }}</div></div>
+<div class="row"><a class="btn small" href="?dept={{ dept.pk }}&week={{ prev|date:'Y-m-d' }}">Earlier</a><a class="btn small" href="?dept={{ dept.pk }}">This week</a><a class="btn small" href="?dept={{ dept.pk }}&week={{ next|date:'Y-m-d' }}">Later</a></div></div>
+<section class="card"><form method="get" class="row"><label class="field">Department<select name="dept" onchange="this.form.submit()">{% for d in departments %}<option value="{{ d.pk }}" {% if dept and d.pk == dept.pk %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></label><input type="hidden" name="week" value="{{ start|date:'Y-m-d' }}"><noscript><button class="btn" type="submit">Show</button></noscript></form></section>
+{% if dept %}
+<section class="card scroll"><table><thead><tr><th>Name</th>{% for d in days %}<th>{{ d|date:"D j" }}</th>{% endfor %}<th>Hours</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.staff.full_name }}</td>{% for cell in r.cells %}<td>{% for s in cell %}<span class="badge ok" title="{{ s.shift_type }}">{{ s.shift_type.code }}</span>{% if can_plan %}<form method="post" action="{% url 'shift_cancel' s.pk %}" style="display:inline">{% csrf_token %}<button class="btn small" type="submit" title="Take off the roster">x</button></form>{% endif %}{% endfor %}</td>{% endfor %}<td>{{ r.hours|floatformat:1 }}</td></tr>{% empty %}<tr><td colspan="9">No shifts planned this week.</td></tr>{% endfor %}
+</tbody>
+{% if cover %}<tfoot><tr><th colspan="9">Minimum cover</th></tr>{% for c in cover %}<tr><td>{{ c.rule.shift_type.code }}, at least {{ c.rule.minimum }}</td>{% for cell in c.cells %}<td>{% if cell.short %}<span class="badge urgent">{{ cell.have }}: short</span>{% else %}<span class="badge ok">{{ cell.have }}</span>{% endif %}</td>{% endfor %}<td></td></tr>{% endfor %}</tfoot>{% endif %}
+</table></section>
+{% if can_plan %}
+<section class="card"><h2>Add a shift</h2><form method="post" action="{% url 'shift_add' dept.pk %}" class="row">{% csrf_token %}<input type="hidden" name="week" value="{{ start|date:'Y-m-d' }}">{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn primary" type="submit">Add shift</button></form><p class="sub">A shift is refused when the person is on leave, has an expired licence, already has an overlapping shift, or would not get enough rest.</p>
+<form method="post" action="{% url 'roster_copy' dept.pk %}">{% csrf_token %}<input type="hidden" name="week" value="{{ start|date:'Y-m-d' }}"><button class="btn" type="submit">Copy the week before into this week</button></form></section>
+{% endif %}
+{% else %}<section class="card"><p>No departments yet. HR can add them under Departments.</p></section>{% endif %}
+{% endblock %}

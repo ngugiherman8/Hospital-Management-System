@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Attendance{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Work planning</div><h1>Attendance</h1><div class="sub">{{ month|date:"F Y" }}. Shifts that have ended are counted. Late means more than 15 minutes after the start.</div></div></div>
+<section class="card"><form method="get" class="row"><label class="field">Department<select name="dept">{% for d in departments %}<option value="{{ d.pk }}" {% if dept and d.pk == dept.pk %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></label><label class="field">Month<input type="month" name="month" value="{{ month|date:'Y-m' }}"></label><button class="btn" type="submit">Show</button></form></section>
+<section class="card scroll"><table><thead><tr><th>Name</th><th>Shifts</th><th>Came</th><th>Late</th><th>Did not come</th><th>No clock-out</th><th>Hours worked</th></tr></thead><tbody>{% for r in rows %}<tr><td>{{ r.staff.full_name }}</td><td>{{ r.planned }}</td><td>{{ r.attended }}</td><td>{{ r.late }}</td><td>{% if r.absent %}<span class="badge urgent">{{ r.absent }}</span>{% else %}0{% endif %}</td><td>{{ r.open }}</td><td>{{ r.hours }}</td></tr>{% empty %}<tr><td colspan="7">No finished shifts.</td></tr>{% endfor %}</tbody></table></section>
+<section class="card"><h2>Add a missed clock-in or clock-out</h2><p class="sub">It is kept, marked as added by you, with your reason.</p><form method="post" action="{% url 'punch_fix' %}" class="row">{% csrf_token %}{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn" type="submit">Add</button></form></section>
+{% endblock %}

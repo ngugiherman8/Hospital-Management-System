@@ -1,1 +1,11 @@
-
+{% extends "base.html" %}
+{% block title %}My shifts{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">{{ staff.staff_number }}</div><h1>My shifts</h1></div></div>
+<section class="card"><h2>Clock</h2><p>{% if last and last.kind == 'in' %}You clocked in at {{ last.at|date:"j M H:i" }}.{% else %}You are not clocked in.{% endif %}</p>
+<form method="post" action="{% url 'clock' %}" class="row">{% csrf_token %}<button class="btn primary" name="kind" value="in" type="submit">Clock in</button><button class="btn" name="kind" value="out" type="submit">Clock out</button></form>
+<table><tbody>{% for p in recent %}<tr><td>{{ p.get_kind_display }}</td><td>{{ p.at|date:"D j M H:i" }}</td><td>{% if p.source == 'supervisor' %}Added by a supervisor: {{ p.note }}{% endif %}</td></tr>{% endfor %}</tbody></table></section>
+<section class="card scroll"><h2>Coming shifts (next 3 weeks)</h2><table><thead><tr><th>Date</th><th>Shift</th><th>Department</th><th>Swap with a colleague</th></tr></thead><tbody>{% for s in coming %}<tr><td>{{ s.date|date:"D j M" }}</td><td>{{ s.shift_type }}</td><td>{{ s.department }}</td><td><form method="post" action="{% url 'swap_propose' s.pk %}" class="row">{% csrf_token %}{{ swap_form.to_staff }}<input name="reason" placeholder="Reason"><button class="btn small" type="submit">Offer</button></form></td></tr>{% empty %}<tr><td colspan="4">Nothing planned.</td></tr>{% endfor %}</tbody></table></section>
+{% if offers %}<section class="card"><h2>Colleagues asking you to take a shift</h2><table><tbody>{% for o in offers %}<tr><td>{{ o.shift.staff.full_name }}</td><td>{{ o.shift.date|date:"D j M" }} {{ o.shift.shift_type }}</td><td>{{ o.reason }}</td><td><form method="post" class="row">{% csrf_token %}<button class="btn small primary" formaction="{% url 'swap_respond' o.pk 'accept' %}" type="submit">Agree</button><button class="btn small" formaction="{% url 'swap_respond' o.pk 'decline' %}" type="submit">Decline</button></form></td></tr>{% endfor %}</tbody></table></section>{% endif %}
+{% if my_swaps %}<section class="card"><h2>My swap offers</h2><table><tbody>{% for w in my_swaps %}<tr><td>{{ w.shift.date|date:"D j M" }} to {{ w.to_staff.full_name }}</td><td>{{ w.get_status_display }}</td><td>{% if w.status == 'proposed' or w.status == 'accepted' %}<form method="post" action="{% url 'swap_respond' w.pk 'cancel' %}">{% csrf_token %}<button class="btn small" type="submit">Withdraw</button></form>{% endif %}</td></tr>{% endfor %}</tbody></table></section>{% endif %}
+{% endblock %}
