@@ -1,1 +1,23 @@
-
+{% extends "base.html" %}
+{% block title %}Imaging work list{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb">Imaging</div><h1>Imaging work list</h1></div></div>
+<form method="get" class="row noprint" style="margin-bottom:16px;gap:12px;align-items:flex-end">
+<label class="field" style="max-width:260px">Modality
+<select name="modality" onchange="this.form.submit()"><option value="">All modalities</option>
+{% for m in modalities %}<option value="{{ m.pk }}" {% if modality == m.pk|stringformat:"s" %}selected{% endif %}>{{ m.name }}</option>{% endfor %}
+</select></label>
+<noscript><button class="btn small" type="submit">Filter</button></noscript>
+</form>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:760px">
+<thead><tr><th style="padding-left:20px">Accession</th><th>Patient</th><th>Study</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>
+{% for s in studies %}<tr>
+<td style="padding-left:20px"><b>{{ s.accession_number }}</b><div class="sub" style="font-size:13px">{{ s.created_at|date:"j M H:i" }}</div></td>
+<td>{{ s.patient.full_name }}<div class="sub" style="font-size:13px">{{ s.patient.hospital_number }}</div></td>
+<td>{{ s.item.test.name }}<div class="sub" style="font-size:13px">{{ s.item.modality.name }}</div></td>
+<td>{{ s.clinical_reason }}{% if s.needs_safety_check and not s.safety_confirmed %}<div><span class="badge flag">Safety check needed</span></div>{% endif %}</td>
+<td><span class="badge {{ s.status }}">{{ s.get_status_display }}</span></td>
+<td style="text-align:right"><a class="btn small" href="{% url 'study_detail' s.pk %}">Open</a></td></tr>
+{% empty %}<tr><td colspan="6" style="padding:24px 20px">No studies waiting.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

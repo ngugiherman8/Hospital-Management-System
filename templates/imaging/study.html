@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ study.accession_number }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'imaging_worklist' %}">Imaging work list</a></div>
+<h1>{{ study.item.test.name }} <span class="badge {{ study.status }}">{{ study.get_status_display }}</span></h1></div></div>
+
+<section class="card"><div class="kv">
+<div><span>Patient</span><b><a href="{% url 'patient_detail' study.patient.pk %}">{{ study.patient.full_name }}</a> ({{ study.patient.hospital_number }})</b></div>
+<div><span>Accession</span><b>{{ study.accession_number }}</b></div>
+<div><span>Modality</span><b>{{ study.item.modality.name }}</b></div>
+<div><span>Ordered by</span><b>{{ study.ordering_user|default:"-" }}</b></div>
+<div><span>Clinical reason</span><b>{{ study.clinical_reason }}</b></div>
+</div>
+{% if viewer_url %}<p><a class="btn small" href="{{ viewer_url }}" target="_blank" rel="noopener">Open in image viewer</a></p>{% endif %}
+</section>
+
+<section class="card"><h2>Safety questions</h2>
+<div class="kv">
+<div><span>Could be pregnant</span><b>{% if study.may_be_pregnant is None %}Not asked{% elif study.may_be_pregnant %}Yes{% else %}No{% endif %}</b></div>
+<div><span>Contrast allergy</span><b>{% if study.contrast_allergy is None %}Not asked{% elif study.contrast_allergy %}Yes{% else %}No{% endif %}</b></div>
+<div><span>Kidney problem</span><b>{% if study.kidney_problem is None %}Not asked{% elif study.kidney_problem %}Yes{% else %}No{% endif %}</b></div>
+</div>
+{% if study.safety_confirmed %}<p class="sub">Confirmed by {{ study.safety_confirmed_by }} on {{ study.safety_confirmed_at|date:"j M H:i" }}.</p>
+{% elif study.needs_safety_check %}<div class="alert warning">This study needs a safety check before the images are taken.</div>{% endif %}
+{% if is_radiographer %}
+<div class="row" style="gap:8px">
+{% if study.needs_safety_check and not study.safety_confirmed %}<form method="post" action="{% url 'study_action' study.pk %}">{% csrf_token %}<input type="hidden" name="action" value="confirm_safety"><button class="btn small" type="submit">Confirm safety questions</button></form>{% endif %}
+{% if study.status == 'ordered' %}<form method="post" action="{% url 'study_action' study.pk %}">{% csrf_token %}<input type="hidden" name="action" value="arrived"><button class="btn small" type="submit">Patient arrived</button></form>{% endif %}
+{% if study.status == 'arrived' %}<form method="post" action="{% url 'study_action' study.pk %}">{% csrf_token %}<input type="hidden" name="action" value="images_done"><button class="btn small" type="submit">Images done</button></form>{% endif %}
+</div>{% endif %}
+</section>
+
+<section class="card"><h2>Files</h2>
+{% for f in files %}<div><a href="{% url 'file_download' f.pk %}">{{ f.file.name|cut:"imaging/" }}</a> <span class="sub">{{ f.note }} {{ f.created_at|date:"j M H:i" }}</span></div>
+{% empty %}<p class="sub">No files attached.</p>{% endfor %}
+{% if is_radiographer or is_radiologist %}
+<form method="post" action="{% url 'file_upload' study.pk %}" enctype="multipart/form-data" class="stack">{% csrf_token %}
+{% include "_field.html" with field=file_form.file %}{% include "_field.html" with field=file_form.note %}
+<button class="btn" type="submit">Attach file (JPEG or PDF)</button></form>{% endif %}
+</section>
+
+<section class="card"><h2>Reports</h2>
+{% for r in reports %}<div style="margin-bottom:16px">
+<b>Version {{ r.version }}</b> <span class="badge {{ r.status }}">{{ r.get_status_display }}</span>
+{% if r.critical %}<span class="badge flag">Critical</span>{% endif %}
+<span class="sub">{{ r.author|default:"-" }}, {{ r.created_at|date:"j M H:i" }}</span>
+{% if r.addendum_reason %}<div class="sub">Addendum: {{ r.addendum_reason }}</div>{% endif %}
+<p><b>Findings.</b> {{ r.findings|linebreaksbr }}</p><p><b>Impression.</b> {{ r.impression|linebreaksbr }}</p>
+{% for a in r.acks.all %}<div class="sub">Read by {{ a.doctor }} on {{ a.acknowledged_at|date:"j M H:i" }}</div>{% endfor %}
+</div>
+{% empty %}<p class="sub">No report yet.</p>{% endfor %}
+{% if can_acknowledge %}<form method="post" action="{% url 'critical_acknowledge' study.unacknowledged_critical.pk %}">{% csrf_token %}<button class="btn" type="submit">I have read this critical finding</button></form>{% endif %}
+{% if is_radiologist and study.status != 'ordered' and study.status != 'arrived' and study.status != 'cancelled' %}
+<form method="post" action="{% url 'report_save' study.pk %}" class="stack">{% csrf_token %}
+{% include "_field.html" with field=report_form.findings %}{% include "_field.html" with field=report_form.impression %}
+{% include "_field.html" with field=report_form.critical %}{% include "_field.html" with field=report_form.sign_final %}{% include "_field.html" with field=report_form.reason %}
+<button class="btn primary" type="submit">Save report</button></form>{% endif %}
+</section>
+{% if visit %}<p><a href="{% url 'visit_detail' visit.pk %}">Back to the visit</a></p>{% endif %}
+{% endblock %}
