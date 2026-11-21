@@ -18,7 +18,7 @@
 <form method="post" action="{% url 'invoice_finalise' invoice.pk %}">{% csrf_token %}<button class="btn primary" type="submit">Finalise invoice</button></form>
 {% endif %}</section>
 {% if payments %}<section class="card"><h2>Payments and receipts</h2><table><thead><tr><th>Receipt</th><th>Method</th><th class="num">Amount</th><th>By</th><th>When</th></tr></thead><tbody>
-{% for p in payments %}<tr><td>{{ p.receipt_number }}</td><td>{{ p.get_method_display }}{% if p.mpesa_code %} {{ p.mpesa_code }}{% endif %}{% if p.reason %}<div class="sub" style="font-size:13px">{{ p.reason }}</div>{% endif %}</td><td class="num">{{ p.amount }}</td><td>{{ p.received_by }}</td><td>{{ p.created_at|date:"j M H:i" }}</td></tr>{% endfor %}</tbody></table></section>{% endif %}
+{% for p in payments %}<tr><td><a href="{% url 'payment_receipt' p.pk %}">{{ p.receipt_number }}</a></td><td>{{ p.get_method_display }}{% if p.mpesa_code %} {{ p.mpesa_code }}{% endif %}{% if p.reason %}<div class="sub" style="font-size:13px">{{ p.reason }}</div>{% endif %}</td><td class="num">{{ p.amount }}</td><td>{{ p.received_by }}</td><td>{{ p.created_at|date:"j M H:i" }}</td></tr>{% endfor %}</tbody></table></section>{% endif %}
 </div><div class="narrow">
 {% if invoice.status == 'open' or invoice.status == 'part_paid' %}<section class="card"><h2>Take payment</h2>
 <form method="post" action="{% url 'invoice_pay' invoice.pk %}" class="stack">{% csrf_token %}{% include "_field.html" with field=pay_form.method %}{% include "_field.html" with field=pay_form.amount %}{% include "_field.html" with field=pay_form.mpesa_code %}{% include "_field.html" with field=pay_form.reference %}<button class="btn primary" type="submit">Record payment</button></form></section>{% endif %}
