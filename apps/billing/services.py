@@ -117,6 +117,47 @@ def service_by_code(code):
     return ServiceItem.objects.filter(code=code, is_active=True).first()
 
 
+def service_for_drug(drug):
+    """The billable item for a drug. A drug added after the last sync gets one made on the spot, with no price,
+    so dispensing it raises a visible ChargeAlert ("has no price") instead of being given away unrecorded."""
+    item, _ = ServiceItem.objects.get_or_create(
+        drug=drug,
+        defaults={"code": f"D-{drug.pk}", "name": str(drug), "category": ServiceItem.Category.DRUG},
+    )
+    return item if item.is_active else None
+
+
+def sync_service_items():
+    """Make sure every drug, test and dental procedure has a billable item (safe to run again).
+
+    New items have NO price. Set prices in Administration; until then a charge raises an alert rather than
+    billing a guessed amount. Returns how many items were created.
+    """
+    from apps.dental.models import DentalProcedure
+    from apps.orders.models import TestCatalogue
+    from apps.pharmacy_rx.models import Drug
+
+    Category = ServiceItem.Category
+    made = 0
+    for drug in Drug.objects.filter(service__isnull=True):
+        _, new = ServiceItem.objects.get_or_create(
+            drug=drug, defaults={"code": f"D-{drug.pk}", "name": str(drug), "category": Category.DRUG}
+        )
+        made += new
+    for test in TestCatalogue.objects.filter(service__isnull=True):
+        category = Category.IMAGING if test.kind == "imaging" else Category.LAB
+        _, new = ServiceItem.objects.get_or_create(
+            test=test, defaults={"code": f"T-{test.code}", "name": test.name, "category": category}
+        )
+        made += new
+    for proc in DentalProcedure.objects.filter(service__isnull=True):
+        _, new = ServiceItem.objects.get_or_create(
+            dental_procedure=proc, defaults={"code": f"DP-{proc.code}", "name": proc.name, "category": Category.DENTAL}
+        )
+        made += new
+    return made
+
+
 def charge_bed_nights(admission, today=None):
     """Charge each night of the stay once. Completed nights only; a same-day stay counts as one night."""
     today = today or timezone.localdate()
