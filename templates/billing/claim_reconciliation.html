@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Claims reconciliation {{ month }}{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'claim_list' %}">Claims</a></div><h1>Claims reconciliation, {{ month }}</h1>
+<p class="sub">Claims for visits in this month, by payer. Outstanding is what the payer still owes on sent claims. Written off is the part of a paid claim the payer did not pay.</p></div></div>
+<form method="get" class="row"><label class="field">Month (YYYY-MM)<input type="text" name="month" value="{{ month }}" pattern="\d{4}-\d{2}" maxlength="7"></label><button class="btn" type="submit">Show</button></form>
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:900px"><thead><tr><th style="padding-left:20px">Payer</th><th class="num">Claims</th><th class="num">Claimed</th><th class="num">Approved</th><th class="num">Paid</th><th class="num">Outstanding</th><th class="num">Rejected</th><th class="num">Not sent</th><th class="num">Written off</th><th class="num">Patient co-pay</th></tr></thead><tbody>
+{% for row in r.rows %}<tr><td style="padding-left:20px">{{ row.payer }}</td><td class="num">{{ row.claims }}</td><td class="num">{{ row.claimed }}</td><td class="num">{{ row.approved }}</td><td class="num">{{ row.paid }}</td><td class="num">{{ row.outstanding }}</td><td class="num">{{ row.rejected }}</td><td class="num">{{ row.not_sent }}</td><td class="num">{{ row.write_off }}</td><td class="num">{{ row.patient_portion }}</td></tr>
+{% empty %}<tr><td colspan="10" style="padding:24px 20px">No claims for {{ month }}.</td></tr>{% endfor %}</tbody>
+{% if r.rows %}<tfoot><tr><th style="padding-left:20px">Total</th><th class="num">{{ r.totals.claims }}</th><th class="num">{{ r.totals.claimed }}</th><th class="num">{{ r.totals.approved }}</th><th class="num">{{ r.totals.paid }}</th><th class="num">{{ r.totals.outstanding }}</th><th class="num">{{ r.totals.rejected }}</th><th class="num">{{ r.totals.not_sent }}</th><th class="num">{{ r.totals.write_off }}</th><th class="num">{{ r.totals.patient_portion }}</th></tr></tfoot>{% endif %}
+</table></div></section>
+{% endblock %}

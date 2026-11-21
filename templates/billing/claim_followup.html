@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Claims follow-up{% endblock %}
+{% block content %}
+<div class="head"><div><div class="crumb"><a href="{% url 'claim_list' %}">Claims</a></div><h1>Claims follow-up</h1>
+<p class="sub">Claims sent to a payer and not yet paid, oldest first. Overdue means more than {{ overdue_days }} days.</p></div></div>
+<div class="stats"><div class="stat"><span>Waiting on payers</span><b>{{ rows|length }}</b></div><div class="stat"><span>Overdue</span><b>{{ overdue_count }}</b></div><div class="stat"><span>Amount outstanding</span><b>{{ outstanding }}</b></div></div>
+<form method="get" class="row"><label class="field">Payer<select name="payer"><option value="">All payers</option><option value="sha" {% if payer == 'sha' %}selected{% endif %}>SHA</option><option value="insurer" {% if payer == 'insurer' %}selected{% endif %}>Private insurer</option><option value="corporate" {% if payer == 'corporate' %}selected{% endif %}>Corporate</option></select></label><button class="btn" type="submit">Show</button></form>
+<form method="post" action="{% url 'claim_followup_mark' %}">{% csrf_token %}
+<section class="card" style="padding:0"><div class="scroll"><table style="min-width:760px"><thead><tr><th style="padding-left:20px"></th><th>Claim</th><th>Patient</th><th>Payer</th><th class="num">Amount</th><th class="num">Days out</th><th>Last chased</th></tr></thead><tbody>
+{% for r in rows %}<tr{% if r.overdue %} class="flag-critical"{% endif %}><td style="padding-left:20px"><input type="checkbox" name="claim" value="{{ r.claim.pk }}" aria-label="Select {{ r.claim.number }}"></td><td><a href="{% url 'claim_detail' r.claim.pk %}">{{ r.claim.number }}</a> <span class="badge {{ r.claim.status }}">{{ r.claim.get_status_display }}</span></td><td>{{ r.claim.invoice.patient.full_name }}</td><td>{{ r.claim.get_payer_kind_display }} {{ r.claim.payer_name }}</td><td class="num">{{ r.claim.amount_claimed }}</td><td class="num"><b>{{ r.days }}</b>{% if r.overdue %} overdue{% endif %}</td><td>{% if r.claim.last_followed_up_at %}{{ r.claim.last_followed_up_at|date:"j M" }} ({{ r.since_follow_up }} days ago){% else %}never{% endif %}</td></tr>
+{% empty %}<tr><td colspan="7" style="padding:24px 20px">Nothing is waiting on a payer.</td></tr>{% endfor %}</tbody></table></div></section>
+{% if rows %}<div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Mark ticked claims as followed up today</button></div>{% endif %}
+</form>
+{% endblock %}

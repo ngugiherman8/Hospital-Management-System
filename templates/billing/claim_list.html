@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Claims{% endblock %}
 {% block content %}
-<div class="head"><div><div class="crumb">Billing</div><h1>Insurer and SHA claims</h1></div></div>
+<div class="head"><div><div class="crumb">Billing</div><h1>Insurer and SHA claims</h1></div><div class="row"><a class="btn" href="{% url 'claim_followup' %}">Follow-up</a>{% if user.role == 'admin' or user.is_superuser %}<a class="btn" href="{% url 'claim_reconciliation' %}">Monthly reconciliation</a>{% endif %}</div></div>
 <form method="get" class="row">{% for f in form %}{% include "_field.html" with field=f %}{% endfor %}<button class="btn" type="submit">Show</button></form>
 {% if form.month.value %}<div class="row"><a class="btn primary" href="{% url 'claim_export' %}?month={{ form.month.value }}">Export {{ form.month.value }} as one file</a><span class="sub">Draft claims in the file become submitted.</span></div>{% endif %}
 <section class="card" style="padding:0"><div class="scroll"><table style="min-width:720px"><thead><tr><th style="padding-left:20px">Claim</th><th>Patient</th><th>Payer</th><th>Month</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>

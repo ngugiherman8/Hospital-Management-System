@@ -22,7 +22,7 @@
 </div><div class="narrow">
 {% if invoice.status == 'open' or invoice.status == 'part_paid' %}<section class="card"><h2>Take payment</h2>
 <form method="post" action="{% url 'invoice_pay' invoice.pk %}" class="stack">{% csrf_token %}{% include "_field.html" with field=pay_form.method %}{% include "_field.html" with field=pay_form.amount %}{% include "_field.html" with field=pay_form.mpesa_code %}{% include "_field.html" with field=pay_form.reference %}<button class="btn primary" type="submit">Record payment</button></form></section>{% endif %}
-{% if invoice.status != 'draft' and invoice.status != 'void' and invoice.payer_kind != 'cash' and not invoice.claim %}<section class="card"><form method="post" action="{% url 'invoice_claim' invoice.pk %}">{% csrf_token %}<button class="btn" type="submit">Make a claim</button></form></section>{% endif %}
+{% if invoice.status != 'draft' and invoice.status != 'void' and invoice.payer_kind != 'cash' and not invoice.claim %}<section class="card"><form method="post" action="{% url 'invoice_claim' invoice.pk %}" class="stack">{% csrf_token %}<label class="field">Patient co-pay (KES, 0 if none)<input type="number" name="patient_portion" value="0" min="0" step="0.01"></label><button class="btn" type="submit">Make a claim</button><p class="sub">The patient pays the co-pay at the till. The payer is claimed for the rest.</p></form></section>{% endif %}
 {% if invoice.claim %}<section class="card"><a href="{% url 'claim_detail' invoice.claim.pk %}">Claim {{ invoice.claim.number }}</a> <span class="badge {{ invoice.claim.status }}">{{ invoice.claim.get_status_display }}</span></section>{% endif %}
 {% if can_manage and invoice.status != 'draft' and invoice.status != 'void' %}
 <section class="card"><h2>Administrator</h2>

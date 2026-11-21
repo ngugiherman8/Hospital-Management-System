@@ -6,7 +6,8 @@
 {% if claim.status == 'rejected' %}<div class="alert error">Rejected: {{ claim.rejection_reason }}</div>{% endif %}
 <div class="cols"><div class="wide"><section class="card"><p>Diagnoses: {{ claim.diagnoses|default:"none recorded" }}. Resubmitted {{ claim.resubmissions }} time(s).</p>
 <table><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead><tbody>{% for l in lines %}<tr><td>{{ l.description }}</td><td class="num">{{ l.quantity }}</td><td class="num">{{ l.unit_price }}</td><td class="num">{{ l.amount }}</td></tr>{% endfor %}</tbody></table>
-<div class="totals"><span>Claimed</span><b>{{ claim.amount_claimed }}</b>{% if claim.amount_approved is not None %}<span>Approved</span><b>{{ claim.amount_approved }}</b>{% endif %}</div></section></div>
+<div class="totals"><span>Claimed</span><b>{{ claim.amount_claimed }}</b>{% if claim.amount_approved is not None %}<span>Approved</span><b>{{ claim.amount_approved }}</b>{% endif %}{% if claim.patient_portion %}<span>Patient co-pay (not claimed)</span><b>{{ claim.patient_portion }}</b>{% endif %}</div>
+{% if claim.last_followed_up_at %}<p class="sub">Payer last chased {{ claim.last_followed_up_at|date:"j M Y" }}.</p>{% endif %}</section></div>
 <div class="narrow">
 {% if claim.status == 'submitted' %}<section class="card"><h2>Payer's answer</h2>
 <form method="post" action="{% url 'claim_action' claim.pk 'approve' %}" class="stack">{% csrf_token %}{% include "_field.html" with field=amount_form.amount %}<button class="btn" type="submit">Approved</button></form>
