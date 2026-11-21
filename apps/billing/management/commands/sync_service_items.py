@@ -7,4 +7,4 @@ from apps.billing.services import sync_service_items
 
 class Command(BaseCommand):
     def handle(self, *args, **opts):
-        self.stdout.write(self.style.SUCCESS(f"{sync_service_items()} billable items."))
+        self.stdout.write(self.style.SUCCESS(f"{sync_service_items()} billable items created."))
