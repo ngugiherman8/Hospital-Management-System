@@ -12,28 +12,82 @@
 {% if user.is_authenticated %}
 <nav class="side" aria-label="Main">
   <div class="brand"><div class="mark">H</div><div>{{ HOSPITAL_NAME }}</div></div>
-  <a href="{% url 'home' %}" {% if request.resolver_match.url_name == 'home' %}class="active"{% endif %}>Dashboard</a>
-  <a href="{% url 'patient_list' %}" {% if 'patient' in request.resolver_match.url_name %}class="active"{% endif %}>Patients</a>
-  <a href="{% url 'appointment_list' %}" {% if 'appointment' in request.resolver_match.url_name %}class="active"{% endif %}>Today's queue</a>
-  <a href="{% url 'ward_board' %}" {% if request.resolver_match.url_name == 'ward_board' %}class="active"{% endif %}>Wards</a>
-  <a href="{% url 'lab_worklist' %}" {% if request.resolver_match.url_name == 'lab_worklist' %}class="active"{% endif %}>Lab work list</a>
-  <a href="{% url 'imaging_worklist' %}" {% if 'study' in request.resolver_match.url_name or request.resolver_match.url_name == 'imaging_worklist' %}class="active"{% endif %}>Imaging</a>
-  {% if user.role == 'midwife' or user.role == 'doctor' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'pregnancy_list' %}" {% if 'pregnan' in request.resolver_match.url_name or 'maternity' in request.resolver_match.url_name %}class="active"{% endif %}>Antenatal &amp; postnatal</a>{% endif %}
-  {% if user.role == 'cashier' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'invoice_list' %}" {% if 'invoice' in request.resolver_match.url_name %}class="active"{% endif %}>Invoices</a><a href="{% url 'claim_list' %}" {% if 'claim' in request.resolver_match.url_name %}class="active"{% endif %}>Claims</a><a href="{% url 'cash_up' %}" {% if request.resolver_match.url_name == 'cash_up' %}class="active"{% endif %}>Cash-up</a><a href="{% url 'price_list' %}" {% if request.resolver_match.url_name == 'price_list' %}class="active"{% endif %}>Prices</a>{% endif %}
-  {% if user.role == 'admin' or user.is_superuser %}<a href="{% url 'day_report' %}" {% if request.resolver_match.url_name == 'day_report' %}class="active"{% endif %}>Day report</a>{% endif %}
-  {% if user.role == 'pharmacist' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'dispense_queue' %}" {% if 'dispense' in request.resolver_match.url_name %}class="active"{% endif %}>Dispensing</a><a href="{% url 'receipt_list' %}" {% if 'receipt' in request.resolver_match.url_name or 'order' in request.resolver_match.url_name or 'supplier' in request.resolver_match.url_name %}class="active"{% endif %}>Receive stock</a><a href="{% url 'stock_take' %}" {% if request.resolver_match.url_name in 'stock_take stock_adjust' %}class="active"{% endif %}>Stock-take</a>{% endif %}
-  {% if user.role in 'pharmacist doctor nurse dentist midwife admin' or user.is_superuser %}<a href="{% url 'stock_levels' %}" {% if request.resolver_match.url_name == 'stock_levels' %}class="active"{% endif %}>Stock levels</a>{% endif %}
-  {% if user.role == 'manager' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'reports_today' %}" {% if request.resolver_match.url_name == 'reports_today' %}class="active"{% endif %}>Today's report</a>{% endif %}
-  {% if user.role == 'admin' or user.is_superuser %}<a href="{% url 'sync_status' %}" {% if request.resolver_match.url_name == 'sync_status' %}class="active"{% endif %}>Sync status</a>{% endif %}
-  <a href="{% url 'issue_list' %}" {% if 'issue' in request.resolver_match.url_name %}class="active"{% endif %}>Problems</a>
-  <a href="{% url 'forms_index' %}" {% if 'form' in request.resolver_match.url_name %}class="active"{% endif %}>Paper forms</a>
-  {% if user.role == 'manager' or user.role == 'admin' or user.is_superuser %}<a href="{% url 'weekly_review' %}" {% if request.resolver_match.url_name == 'weekly_review' %}class="active"{% endif %}>Weekly review</a><a href="{% url 'pilot_days' %}" {% if request.resolver_match.url_name == 'pilot_days' %}class="active"{% endif %}>Paper vs system</a><a href="{% url 'go_no_go' %}" {% if request.resolver_match.url_name == 'go_no_go' %}class="active"{% endif %}>Go or no-go</a><a href="{% url 'training' %}" {% if 'training' in request.resolver_match.url_name %}class="active"{% endif %}>Training</a><a href="{% url 'setup_check' %}" {% if request.resolver_match.url_name == 'setup_check' %}class="active"{% endif %}>Set-up check</a><a href="{% url 'audit_review' %}" {% if request.resolver_match.url_name == 'audit_review' %}class="active"{% endif %}>Access review</a>{% endif %}
-  {% if user.is_staff %}<a href="{% url 'admin:index' %}">Administration</a>{% endif %}
+  {% with n=request.resolver_match.url_name role=user.role %}
+  <a class="top {% if n == 'home' %}active{% endif %}" href="{% url 'home' %}">Dashboard</a>
+
+  <details class="grp">
+    <summary>Front desk</summary>
+    <a href="{% url 'patient_list' %}" {% if 'patient' in n %}class="active"{% endif %}>Patients</a>
+    <a href="{% url 'appointment_list' %}" {% if 'appointment' in n %}class="active"{% endif %}>Today's queue</a>
+  </details>
+
+  <details class="grp">
+    <summary>Clinical</summary>
+    <a href="{% url 'ward_board' %}" {% if n == 'ward_board' %}class="active"{% endif %}>Wards</a>
+    {% if role == 'midwife' or role == 'doctor' or role == 'admin' or user.is_superuser %}<a href="{% url 'pregnancy_list' %}" {% if 'pregnan' in n or 'maternity' in n %}class="active"{% endif %}>Antenatal &amp; postnatal</a>{% endif %}
+  </details>
+
+  <details class="grp">
+    <summary>Diagnostics</summary>
+    <a href="{% url 'lab_worklist' %}" {% if n == 'lab_worklist' %}class="active"{% endif %}>Lab work list</a>
+    {% if role == 'radiographer' or role == 'radiologist' or role == 'doctor' or role == 'dentist' or role == 'midwife' or role == 'admin' or user.is_superuser %}<a href="{% url 'imaging_worklist' %}" {% if 'study' in n or n == 'imaging_worklist' %}class="active"{% endif %}>Imaging</a>{% endif %}
+  </details>
+
+  {% if role == 'pharmacist' or role == 'doctor' or role == 'nurse' or role == 'dentist' or role == 'midwife' or role == 'admin' or user.is_superuser %}
+  <details class="grp">
+    <summary>Pharmacy &amp; stock</summary>
+    {% if role == 'pharmacist' or role == 'admin' or user.is_superuser %}
+    <a href="{% url 'dispense_queue' %}" {% if 'dispense' in n %}class="active"{% endif %}>Dispensing</a>
+    <a href="{% url 'receipt_list' %}" {% if 'receipt' in n or 'order' in n or 'supplier' in n %}class="active"{% endif %}>Receive stock</a>
+    <a href="{% url 'stock_take' %}" {% if n == 'stock_take' or n == 'stock_adjust' %}class="active"{% endif %}>Stock-take</a>
+    {% endif %}
+    <a href="{% url 'stock_levels' %}" {% if n == 'stock_levels' %}class="active"{% endif %}>Stock levels</a>
+  </details>
+  {% endif %}
+
+  {% if role == 'cashier' or role == 'admin' or user.is_superuser %}
+  <details class="grp">
+    <summary>Billing</summary>
+    <a href="{% url 'invoice_list' %}" {% if 'invoice' in n %}class="active"{% endif %}>Invoices</a>
+    <a href="{% url 'claim_list' %}" {% if 'claim' in n %}class="active"{% endif %}>Claims</a>
+    <a href="{% url 'cash_up' %}" {% if n == 'cash_up' %}class="active"{% endif %}>Cash-up</a>
+    <a href="{% url 'price_list' %}" {% if n == 'price_list' %}class="active"{% endif %}>Prices</a>
+    {% if role == 'admin' or user.is_superuser %}<a href="{% url 'day_report' %}" {% if n == 'day_report' %}class="active"{% endif %}>Day report</a>{% endif %}
+  </details>
+  {% endif %}
+
+  {% if role == 'manager' or role == 'admin' or user.is_superuser %}
+  <details class="grp">
+    <summary>Management</summary>
+    <a href="{% url 'reports_today' %}" {% if n == 'reports_today' %}class="active"{% endif %}>Today's report</a>
+    <a href="{% url 'weekly_review' %}" {% if n == 'weekly_review' %}class="active"{% endif %}>Weekly review</a>
+    <a href="{% url 'pilot_days' %}" {% if n == 'pilot_days' %}class="active"{% endif %}>Paper vs system</a>
+    <a href="{% url 'go_no_go' %}" {% if n == 'go_no_go' %}class="active"{% endif %}>Go or no-go</a>
+    <a href="{% url 'training' %}" {% if 'training' in n %}class="active"{% endif %}>Training</a>
+    <a href="{% url 'setup_check' %}" {% if n == 'setup_check' %}class="active"{% endif %}>Set-up check</a>
+    <a href="{% url 'audit_review' %}" {% if n == 'audit_review' %}class="active"{% endif %}>Access review</a>
+  </details>
+  {% endif %}
+
+  <details class="grp">
+    <summary>Help &amp; system</summary>
+    <a href="{% url 'issue_list' %}" {% if 'issue' in n %}class="active"{% endif %}>Problems</a>
+    <a href="{% url 'forms_index' %}" {% if 'form' in n %}class="active"{% endif %}>Paper forms</a>
+    {% if role == 'admin' or user.is_superuser %}<a href="{% url 'sync_status' %}" {% if n == 'sync_status' %}class="active"{% endif %}>Sync status</a>{% endif %}
+    {% if user.is_staff %}<a href="{% url 'admin:index' %}">Administration</a>{% endif %}
+  </details>
+  {% endwith %}
   <div class="user">
     <strong>{{ user }}</strong>{{ user.get_role_display }}
     <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
   </div>
 </nav>
+<script>
+(function(){var KEY="hms-nav",saved={};try{saved=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+document.querySelectorAll(".side details.grp").forEach(function(d){var name=d.querySelector("summary").textContent.trim();
+if(d.querySelector("a.active")||saved[name])d.open=true;
+d.addEventListener("toggle",function(){saved[name]=d.open;try{localStorage.setItem(KEY,JSON.stringify(saved))}catch(e){}});});})();
+</script>
 {% endif %}
 <main class="main">
 {% if TRAINING_COPY %}<div class="alert error" role="alert"><b>TRAINING COPY.</b> These are made-up patients. Nothing here is real and nothing leaves this server.</div>{% endif %}
