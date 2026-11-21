@@ -121,7 +121,9 @@ else:
             "NAME": env("POSTGRES_DB", "hms"),
             # POSTGRES_USER is the account the running website uses. In production it has only the rights it needs
             # (see apply_db_grants). Migrations and apply_db_grants run as the owner when HMS_USE_OWNER_DB is true.
-            "USER": env("POSTGRES_OWNER_USER", "hms") if env("HMS_USE_OWNER_DB") == "true" else env("POSTGRES_USER", "hms"),
+            "USER": env("POSTGRES_OWNER_USER", "hms")
+            if env("HMS_USE_OWNER_DB") == "true"
+            else env("POSTGRES_USER", "hms"),
             "PASSWORD": env("POSTGRES_OWNER_PASSWORD", "hms")
             if env("HMS_USE_OWNER_DB") == "true"
             else env("POSTGRES_PASSWORD", "hms"),
