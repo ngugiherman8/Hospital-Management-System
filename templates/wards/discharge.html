@@ -1,7 +1,72 @@
 {% extends "base.html" %}
 {% block title %}Discharge{% endblock %}
 {% block content %}
-<div class="head"><div><div class="crumb">Ward board / {{ admission.number }}</div><h1>Discharge</h1><div class="sub">{{ admission.patient.full_name }}, {{ admission.bed }}. Admitted {{ admission.admitted_at|date:"j M H:i" }}: {{ admission.reason }}</div></div></div>
-<form method="post" class="card" style="max-width:640px">{% csrf_token %}{% include "_field.html" with field=form.summary %}
-<div class="row"><a class="btn" href="{% url 'visit_detail' admission.appointment_id %}">Cancel</a><button class="btn primary" type="submit">Discharge and free the bed</button></div></form>
+
+<div class="head">
+  <div>
+    <div class="crumb">Ward board / {{ admission.number }}</div>
+    <h1>Discharge</h1>
+    <div class="sub">
+      {{ admission.patient.full_name }}, {{ admission.bed }}.
+      Admitted {{ admission.admitted_at|date:"j M H:i" }}: {{ admission.reason }}
+    </div>
+  </div>
+</div>
+
+{# --- financial clearance banner --- #}
+{% if not cleared %}
+<div class="alert error" role="alert">
+  <b>Financial clearance required</b> &mdash; {{ clearance_reason }}
+  <div style="margin-top:6px">
+    <a class="btn small" href="{% url 'visit_invoices' admission.appointment_id %}">
+      Go to billing &rarr;
+    </a>
+  </div>
+</div>
+{% else %}
+<div class="alert" style="background:var(--ok-bg,#ecfdf5);border-color:var(--ok,#059669);color:var(--ok,#059669)" role="status">
+  &#10003; Financially cleared &mdash; {{ clearance_reason }}
+</div>
+{% endif %}
+
+<form method="post" class="card" style="max-width:640px">
+  {% csrf_token %}
+  {% include "_field.html" with field=form.summary %}
+
+  {% if not cleared %}
+    {# Non-admin: button is disabled until billing is sorted #}
+    {% if can_manage %}
+    <details style="margin-bottom:12px">
+      <summary style="cursor:pointer;color:var(--muted,#6b7280);font-size:13px">
+        Administrator override
+      </summary>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:13px">
+        <input type="checkbox" name="override_clearance" value="1" style="margin-top:3px">
+        <span>
+          Discharge despite outstanding balance or missing claim.
+          This action is logged. Use only when authorised by the medical officer in charge.
+        </span>
+      </label>
+    </details>
+    <div class="row">
+      <a class="btn" href="{% url 'visit_detail' admission.appointment_id %}">Cancel</a>
+      <button class="btn primary" type="submit">Discharge and free the bed</button>
+    </div>
+    {% else %}
+    <div class="row">
+      <a class="btn" href="{% url 'visit_detail' admission.appointment_id %}">Cancel</a>
+      <button class="btn primary" type="submit" disabled
+              title="Settle the bill before discharging.">
+        Discharge and free the bed
+      </button>
+    </div>
+    {% endif %}
+  {% else %}
+  <div class="row">
+    <a class="btn" href="{% url 'visit_detail' admission.appointment_id %}">Cancel</a>
+    <button class="btn primary" type="submit">Discharge and free the bed</button>
+  </div>
+  {% endif %}
+</form>
+
 {% endblock %}
