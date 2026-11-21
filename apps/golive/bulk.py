@@ -54,6 +54,7 @@ class Importer:
     prepare: object = None
     whole_file: object = None
     order: int = 0
+    starter: list = field(default_factory=list)  # common ready-made rows, filled in at the bottom of this file
 
     @property
     def required(self):
@@ -177,7 +178,7 @@ def do_price(r, ctx):
     if not code:
         raise RowError("code is missing")
     payer = choice(r.get("payer") or "cash", PayerKind.choices, "payer")
-    amount = money(r.get("amount", ""), "amount")
+    amount = money(r["amount"], "amount") if r.get("amount") else None
     item = ServiceItem.objects.filter(code=code).first()
     note = ""
     if item is None:
@@ -186,6 +187,10 @@ def do_price(r, ctx):
         category = choice(r["category"], ServiceItem.Category.choices, "category")
         item = ServiceItem.objects.create(code=code, name=r["name"], category=category)
         note = "new price-list item"
+    if amount is None:
+        if note:
+            return "created", note + ", no price set yet (add it later)"
+        return "skipped", "no amount given, existing price left as it is"
     _, created = ItemPrice.objects.update_or_create(service=item, payer_kind=payer, defaults={"amount": amount})
     return ("created" if created else "updated"), note
 
@@ -266,7 +271,11 @@ def do_ward(r, ctx):
     kind = choice(r.get("kind") or "general", Ward.Kind.choices, "ward kind")
     ward, created = Ward.objects.get_or_create(name=r["ward"], defaults={"kind": kind})
     spec = r.get("beds", "")
-    numbers = [str(i) for i in range(1, int(spec) + 1)] if spec.isdigit() else [b.strip() for b in spec.split(";") if b.strip()]
+    numbers = (
+        [str(i) for i in range(1, int(spec) + 1)]
+        if spec.isdigit()
+        else [b.strip() for b in spec.split(";") if b.strip()]
+    )
     if len(numbers) > 500:
         raise RowError("more than 500 beds in one ward is probably a mistake")
     added = sum(Bed.objects.get_or_create(ward=ward, number=n)[1] for n in numbers)
@@ -278,7 +287,9 @@ def do_department(r, ctx):
 
     if not r.get("name"):
         raise RowError("name is missing")
-    _, created = Department.objects.update_or_create(name=r["name"], defaults={"is_active": flag(r.get("active"), True)})
+    _, created = Department.objects.update_or_create(
+        name=r["name"], defaults={"is_active": flag(r.get("active"), True)}
+    )
     return ("created" if created else "updated"), ""
 
 
@@ -318,10 +329,15 @@ def do_opening_stock(r, ctx):
     from apps.stock.models import StockBatch
 
     drug = Drug.objects.filter(
-        generic_name__iexact=r.get("generic_name", ""), strength__iexact=r.get("strength", ""), form__iexact=r.get("form", "")
+        generic_name__iexact=r.get("generic_name", ""),
+        strength__iexact=r.get("strength", ""),
+        form__iexact=r.get("form", ""),
     ).first()
     if drug is None:
-        raise RowError("no drug in the drug list matches this name, strength and form (import the drugs first, and match them exactly)")
+        raise RowError(
+            "no drug in the drug list matches this name, strength and form "
+            "(import the drugs first, and match them exactly)"
+        )
     expiry = parse_date(r.get("expiry_date"), "expiry_date")
     qty = whole(r.get("quantity"), "quantity")
     if qty <= 0:
@@ -371,7 +387,9 @@ def patients_whole_file(text, user, dry_run):
 
 IMPORTERS = [
     Importer(
-        "patients", "Patients", "Register many patients at once. Duplicates are linked, not created twice.",
+        "patients",
+        "Patients",
+        "Register many patients at once. Duplicates are linked, not created twice.",
         [
             ("legacy_id", True, "Any unique id from your old list or register"),
             ("first_name", True, ""),
@@ -388,11 +406,24 @@ IMPORTERS = [
             ("payer_name", False, "Insurer or company"),
             ("member_number", False, ""),
         ],
-        [{"legacy_id": "P001", "first_name": "Wanjiru", "last_name": "Kamau", "date_of_birth": "1992-03-14", "sex": "F", "phone": "0712000001", "payer": "sha"}],
-        whole_file=patients_whole_file, order=1,
+        [
+            {
+                "legacy_id": "P001",
+                "first_name": "Wanjiru",
+                "last_name": "Kamau",
+                "date_of_birth": "1992-03-14",
+                "sex": "F",
+                "phone": "0712000001",
+                "payer": "sha",
+            }
+        ],
+        whole_file=patients_whole_file,
+        order=1,
     ),
     Importer(
-        "drugs", "Drugs", "The drug list with prices and reorder levels. Also creates each drug's price-list item.",
+        "drugs",
+        "Drugs",
+        "The drug list with prices and reorder levels. Also creates each drug's price-list item.",
         [
             ("generic_name", True, "Amoxicillin"),
             ("strength", False, "500 mg"),
@@ -402,11 +433,25 @@ IMPORTERS = [
             ("reorder_level", False, "Whole number"),
             ("active", False, "yes or no (default yes)"),
         ],
-        [{"generic_name": "Amoxicillin", "strength": "500 mg", "form": "Capsule", "route": "Oral", "price": "15", "reorder_level": "100", "active": "yes"}],
-        do_drug, _drug_label, order=2,
+        [
+            {
+                "generic_name": "Amoxicillin",
+                "strength": "500 mg",
+                "form": "Capsule",
+                "route": "Oral",
+                "price": "15",
+                "reorder_level": "100",
+                "active": "yes",
+            }
+        ],
+        do_drug,
+        _drug_label,
+        order=2,
     ),
     Importer(
-        "opening_stock", "Opening stock", "Counted stock to start with. The drug must already be in the drug list.",
+        "opening_stock",
+        "Opening stock",
+        "Counted stock to start with. The drug must already be in the drug list.",
         [
             ("generic_name", True, ""),
             ("strength", False, "Must match the drug list"),
@@ -416,35 +461,76 @@ IMPORTERS = [
             ("quantity", True, "Whole number"),
             ("unit_cost", False, ""),
         ],
-        [{"generic_name": "Amoxicillin", "strength": "500 mg", "form": "Capsule", "batch_number": "B1023", "expiry_date": "2027-03-31", "quantity": "500", "unit_cost": "9"}],
-        do_opening_stock, lambda r: f"{_drug_label(r)} batch {r.get('batch_number', '')}", prepare_opening_stock, order=3,
+        [
+            {
+                "generic_name": "Amoxicillin",
+                "strength": "500 mg",
+                "form": "Capsule",
+                "batch_number": "B1023",
+                "expiry_date": "2027-03-31",
+                "quantity": "500",
+                "unit_cost": "9",
+            }
+        ],
+        do_opening_stock,
+        lambda r: f"{_drug_label(r)} batch {r.get('batch_number', '')}",
+        prepare_opening_stock,
+        order=3,
     ),
     Importer(
-        "suppliers", "Suppliers", "Companies you buy stock from.",
+        "suppliers",
+        "Suppliers",
+        "Companies you buy stock from.",
         [("name", True, ""), ("phone", False, ""), ("email", False, ""), ("active", False, "yes or no")],
         [{"name": "Kenya Medical Supplies", "phone": "0711000000", "email": "orders@example.com", "active": "yes"}],
-        do_supplier, lambda r: r.get("name", ""), order=4,
+        do_supplier,
+        lambda r: r.get("name", ""),
+        order=4,
     ),
     Importer(
-        "prices", "Price list", "Prices for each kind of payer. A new code needs a name and category.",
+        "prices",
+        "Price list",
+        "Prices for each kind of payer. A new code needs a name and category.",
         [
             ("code", True, "The price-list code"),
             ("name", False, "Needed only for a new item"),
             ("category", False, "registration, consultation, lab, imaging, dental, bed, drug, antenatal, other"),
             ("payer", False, "cash (default), sha, insurer or corporate"),
-            ("amount", True, "Price in shillings"),
+            ("amount", False, "Price in shillings. Leave blank to add the item now and price it later"),
         ],
-        [{"code": "CONS-GEN", "name": "General consultation", "category": "consultation", "payer": "cash", "amount": "500"}],
-        do_price, lambda r: f"{r.get('code', '')} ({r.get('payer') or 'cash'})", order=5,
+        [
+            {
+                "code": "CONS-GEN",
+                "name": "General consultation",
+                "category": "consultation",
+                "payer": "cash",
+                "amount": "500",
+            }
+        ],
+        do_price,
+        lambda r: f"{r.get('code', '')} ({r.get('payer') or 'cash'})",
+        order=5,
     ),
     Importer(
-        "modalities", "Imaging modalities", "The imaging machines and rooms. Add these before imaging tests.",
-        [("name", True, "X-ray"), ("dicom_code", True, "DX, US, CT, MR, MG, RF"), ("room", False, ""), ("can_send_dicom", False, "yes or no"), ("scanner_address", False, "")],
+        "modalities",
+        "Imaging modalities",
+        "The imaging machines and rooms. Add these before imaging tests.",
+        [
+            ("name", True, "X-ray"),
+            ("dicom_code", True, "DX, US, CT, MR, MG, RF"),
+            ("room", False, ""),
+            ("can_send_dicom", False, "yes or no"),
+            ("scanner_address", False, ""),
+        ],
         [{"name": "X-ray", "dicom_code": "DX", "room": "Room 1", "can_send_dicom": "no"}],
-        do_modality, lambda r: r.get("name", ""), order=6,
+        do_modality,
+        lambda r: r.get("name", ""),
+        order=6,
     ),
     Importer(
-        "tests", "Lab and imaging test catalogue", "Lab tests and imaging studies with prices and normal ranges.",
+        "tests",
+        "Lab and imaging test catalogue",
+        "Lab tests and imaging studies with prices and normal ranges.",
         [
             ("code", True, "Unique, up to 20 characters"),
             ("name", True, ""),
@@ -463,27 +549,61 @@ IMPORTERS = [
         ],
         [
             {"code": "FBC", "name": "Full blood count", "kind": "lab", "sample_type": "Blood (EDTA)", "price": "800"},
-            {"code": "CXR", "name": "Chest X-ray", "kind": "imaging", "price": "1500", "modality": "X-ray", "body_part": "Chest", "uses_radiation": "yes"},
+            {
+                "code": "CXR",
+                "name": "Chest X-ray",
+                "kind": "imaging",
+                "price": "1500",
+                "modality": "X-ray",
+                "body_part": "Chest",
+                "uses_radiation": "yes",
+            },
         ],
-        do_test, lambda r: f"{r.get('code', '')} {r.get('name', '')}".strip(), order=7,
+        do_test,
+        lambda r: f"{r.get('code', '')} {r.get('name', '')}".strip(),
+        order=7,
     ),
     Importer(
-        "wards", "Wards and beds", "Wards with their beds. beds can be a number (12) or bed names separated by ;",
-        [("ward", True, ""), ("kind", False, "general, maternity, paediatric or private"), ("beds", False, "12  or  A1;A2;A3")],
-        [{"ward": "Male ward", "kind": "general", "beds": "12"}, {"ward": "Maternity", "kind": "maternity", "beds": "M1;M2;M3"}],
-        do_ward, lambda r: r.get("ward", ""), order=8,
+        "wards",
+        "Wards and beds",
+        "Wards with their beds. beds can be a number (12) or bed names separated by ;",
+        [
+            ("ward", True, ""),
+            ("kind", False, "general, maternity, paediatric or private"),
+            ("beds", False, "12  or  A1;A2;A3"),
+        ],
+        [
+            {"ward": "Male ward", "kind": "general", "beds": "12"},
+            {"ward": "Maternity", "kind": "maternity", "beds": "M1;M2;M3"},
+        ],
+        do_ward,
+        lambda r: r.get("ward", ""),
+        order=8,
     ),
     Importer(
-        "departments", "Departments", "Hospital departments for staff records.",
+        "departments",
+        "Departments",
+        "Hospital departments for staff records.",
         [("name", True, ""), ("active", False, "yes or no")],
         [{"name": "Outpatient", "active": "yes"}],
-        do_department, lambda r: r.get("name", ""), order=9,
+        do_department,
+        lambda r: r.get("name", ""),
+        order=9,
     ),
     Importer(
-        "leave_types", "Leave types", "Types of staff leave and how many days each earns per year.",
-        [("name", True, ""), ("annual_days", False, "Days per year"), ("uses_balance", False, "yes or no"), ("is_paid", False, "yes or no")],
+        "leave_types",
+        "Leave types",
+        "Types of staff leave and how many days each earns per year.",
+        [
+            ("name", True, ""),
+            ("annual_days", False, "Days per year"),
+            ("uses_balance", False, "yes or no"),
+            ("is_paid", False, "yes or no"),
+        ],
         [{"name": "Annual leave", "annual_days": "21", "uses_balance": "yes", "is_paid": "yes"}],
-        do_leave_type, lambda r: r.get("name", ""), order=10,
+        do_leave_type,
+        lambda r: r.get("name", ""),
+        order=10,
     ),
 ]
 BY_KEY = {i.key: i for i in IMPORTERS}
@@ -511,7 +631,9 @@ def read_table(importer, text):
     missing = [c for c in importer.required if c not in headers and importer.key != "patients"]
     if missing:
         raise BulkError(
-            "These columns are missing from the first row: " + ", ".join(missing) + ". Download the template to see them."
+            "These columns are missing from the first row: "
+            + ", ".join(missing)
+            + ". Download the template to see them."
         )
     rows = []
     for number_, raw in enumerate(reader, start=2):
@@ -552,7 +674,9 @@ def run(importer, text, user, dry_run):
                 except ValidationError as exc:
                     results.append(Result(number_, label, "error", " ".join(exc.messages)))
                 except Exception as exc:  # noqa: BLE001 - one bad row must not stop the rest
-                    results.append(Result(number_, label, "error", f"could not be saved ({type(exc).__name__}: {str(exc)[:120]})"))
+                    results.append(
+                        Result(number_, label, "error", f"could not be saved ({type(exc).__name__}: {str(exc)[:120]})")
+                    )
                 else:
                     results.append(Result(number_, label, status, message))
             if dry_run:
@@ -569,11 +693,11 @@ def summarise(results):
     return counts
 
 
-def template_csv(importer):
+def template_csv(importer, starter=False):
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(importer.names)
-    for sample in importer.sample:
+    for sample in importer.starter if starter else importer.sample:
         writer.writerow([sample.get(n, "") for n in importer.names])
     return "\ufeff" + out.getvalue()
 
@@ -586,3 +710,42 @@ def errors_csv(results):
         if r.status == "error":
             writer.writerow([r.row, r.label, r.message])
     return "\ufeff" + out.getvalue()
+
+
+# ---------------------------------------------------------------- starter data and downloads
+from .bulk_starter import STARTER  # noqa: E402
+
+for _imp in IMPORTERS:
+    _imp.starter = STARTER.get(_imp.key, [])
+
+README = """HOSPITAL MANAGEMENT SYSTEM: BULK IMPORT FILES
+
+starter-data/   Common data most hospitals need, ready to upload. Open in Excel, add your prices, then upload.
+blank-templates/  Empty files with one example row, for your own lists.
+
+Upload them in this order (Administration, Bulk import):
+  1 imaging modalities  2 drugs  3 tests  4 prices  5 wards  6 departments  7 leave types
+  then your own: suppliers, opening stock, patients.
+
+Please read before you upload:
+- Prices are blank on purpose. Every hospital sets its own. Fill the price columns, then upload again:
+  the import updates existing items and does not duplicate them.
+- Reference ranges are usual adult values. Your clinical lead must confirm them before go-live.
+- The drug list follows the groups of the Kenya Essential Medicines List. Check it against your formulary,
+  delete rows you do not stock, and add the ones that are missing.
+- Bed counts are blank. Add them in the wards file (12, or names like A1;A2;A3) and upload again.
+- Save as CSV (UTF-8) if you edit in Excel.
+"""
+
+
+def starter_zip():
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("README.txt", README)
+        for i in sorted(IMPORTERS, key=lambda i: i.order):
+            z.writestr(f"blank-templates/{i.order:02d}-{i.key}.csv", template_csv(i))
+            if i.starter:
+                z.writestr(f"starter-data/{i.order:02d}-{i.key}.csv", template_csv(i, starter=True))
+    return buffer.getvalue()

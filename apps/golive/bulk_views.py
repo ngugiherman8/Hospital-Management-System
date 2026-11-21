@@ -95,3 +95,18 @@ def bulk_errors(request):
     rows = request.session.get("bulk_errors", [])
     results = [bulk.Result(r[0], r[1], "error", r[2]) for r in rows]
     return _csv(bulk.errors_csv(results), "import-problems.csv")
+
+
+@role_required()
+def bulk_starter(request, kind):
+    importer = _importer(kind)
+    if not importer.starter:
+        raise Http404
+    return _csv(bulk.template_csv(importer, starter=True), f"{importer.key}-starter-data.csv")
+
+
+@role_required()
+def bulk_starter_zip(request):
+    response = HttpResponse(bulk.starter_zip(), content_type="application/zip")
+    response["Content-Disposition"] = 'attachment; filename="hms-import-templates.zip"'
+    return response
