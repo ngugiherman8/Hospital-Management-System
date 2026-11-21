@@ -28,10 +28,6 @@ from django.core.management.base import BaseCommand, CommandError
 # Management commands to run, in order, between `migrate` and `collectstatic`.
 STEPS = [
     "ensure_admin",
-    "seed_demo",
-    "sync_service_items",
-    "seed_sample_data",
-    "backfill_charges",
 ]
 
 
