@@ -471,3 +471,70 @@ def test_invoice_screen_actions(login, visit, cashier):
     c.post(f"/billing/invoice/{inv.pk}/pay/", {"method": "cash", "amount": "100"})
     inv.refresh_from_db()
     assert inv.status == "part_paid"
+
+
+# ---------- P2: co-pay, follow-up, reconciliation ----------
+
+
+def test_copay_is_kept_out_of_the_claim_and_must_be_collected_before_discharge(sha_invoice, cashier):
+    visit = sha_invoice.appointment
+    claim = services.create_claim(sha_invoice, cashier, patient_portion=D("100"))
+    assert claim.patient_portion == D("100.00")
+    assert claim.amount_claimed == sha_invoice.total - D("100")
+    cleared, reason = services.clearance_status(visit)
+    assert not cleared and "co-pay" in reason
+    services.take_payment(sha_invoice, "cash", D("100"), cashier)
+    assert services.clearance_status(visit)[0]
+
+
+def test_copay_cannot_be_the_whole_invoice(sha_invoice, cashier):
+    with pytest.raises(ValidationError):
+        services.create_claim(sha_invoice, cashier, patient_portion=sha_invoice.total)
+    with pytest.raises(ValidationError):
+        services.create_claim(sha_invoice, cashier, patient_portion=D("-1"))
+
+
+def test_paying_the_claim_leaves_only_the_copay_on_the_invoice(sha_invoice, cashier):
+    claim = services.create_claim(sha_invoice, cashier, patient_portion=D("100"))
+    services.export_claims(Claim.objects.all())
+    claim.refresh_from_db()
+    services.approve_claim(claim, claim.amount_claimed)
+    services.mark_claim_paid(claim, cashier, claim.amount_claimed)
+    sha_invoice.refresh_from_db()
+    assert sha_invoice.balance == D("100.00") and sha_invoice.status == "part_paid"
+
+
+def test_claim_ageing_lists_the_oldest_first_and_followup_stamps_it(sha_invoice, cashier):
+    from datetime import timedelta
+
+    claim = services.create_claim(sha_invoice, cashier)
+    services.export_claims(Claim.objects.all())
+    Claim.objects.filter(pk=claim.pk).update(submitted_at=timezone.now() - timedelta(days=45))
+    rows = services.claim_ageing()
+    assert rows[0]["claim"].pk == claim.pk and rows[0]["days"] == 45 and rows[0]["overdue"]
+    assert services.follow_up_claims([claim]) == 1
+    claim.refresh_from_db()
+    assert claim.last_followed_up_at
+    services.reject_claim(claim, "Wrong member number")
+    assert services.follow_up_claims([claim]) == 0  # no longer waiting on the payer
+    assert services.claim_ageing() == []
+
+
+def test_insurer_reconciliation_shows_paid_and_written_off(sha_invoice, cashier):
+    claim = services.create_claim(sha_invoice, cashier)
+    services.export_claims(Claim.objects.all())
+    claim.refresh_from_db()
+    services.approve_claim(claim, D("550"))
+    services.mark_claim_paid(claim, cashier, D("550"))
+    rec = services.insurer_reconciliation(claim.batch)
+    row = rec["rows"][0]
+    assert row["claimed"] == D("600.00") and row["paid"] == D("550.00") and row["write_off"] == D("50.00")
+    assert row["outstanding"] == 0 and rec["totals"]["claims"] == 1
+
+
+def test_followup_and_reconciliation_pages(login, sha_invoice, cashier, admin_user):
+    assert login(cashier).get("/billing/claims/followup/").status_code == 200
+    assert login(cashier).get("/billing/claims/reconciliation/").status_code == 403
+    assert login(admin_user).get("/billing/claims/reconciliation/").status_code == 200
+    r = login(cashier).post(f"/billing/invoice/{sha_invoice.pk}/claim/", {"patient_portion": "abc"})
+    assert r.status_code == 302 and not Claim.objects.exists()
