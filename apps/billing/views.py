@@ -16,7 +16,7 @@ from apps.accounts.models import Role
 from apps.core.audit import log_access
 from apps.core.permissions import role_required
 
-from . import services
+from . import mpesa, services
 from .forms import (
     AddLineForm,
     CashUpForm,
@@ -27,6 +27,7 @@ from .forms import (
     PaymentForm,
     ReasonForm,
     RefundForm,
+    StkForm,
 )
 from .models import CashUp, ChargeAlert, Claim, Invoice, InvoiceLine, ServiceItem
 
@@ -88,6 +89,9 @@ def _invoice_context(invoice, request, **extra):
             resolved_at__isnull=True, patient=invoice.patient, appointment=invoice.appointment
         ),
         "can_manage": request.user.has_role(Role.ADMIN),
+        "stk_enabled": mpesa.is_configured(),
+        "stk_form": StkForm(initial={"phone": invoice.patient.phone, "amount": max(int(invoice.balance), 1)}),
+        "prompts": invoice.mpesa_prompts.all()[:5],
     }
     ctx.update(extra)
     return ctx
@@ -291,7 +295,14 @@ def claim_list(request):
             qs = qs.filter(batch=form.cleaned_data["month"])
         if form.cleaned_data["status"]:
             qs = qs.filter(status=form.cleaned_data["status"])
-    return render(request, "billing/claim_list.html", {"claims": qs[:200], "form": form})
+    missing_facility_code = not getattr(settings, "HOSPITAL_FACILITY_CODE", "") and Claim.objects.filter(
+        payer_kind="sha"
+    ).exclude(status=Claim.Status.PAID).exists()
+    return render(
+        request,
+        "billing/claim_list.html",
+        {"claims": qs[:200], "form": form, "missing_facility_code": missing_facility_code},
+    )
 
 
 @role_required(*CASHIER)
@@ -403,6 +414,59 @@ def claim_export(request):
     response = HttpResponse(body, content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="claims-{month}.csv"'
     return response
+
+
+# ------------------------------------------------------------ monthly report
+
+
+@role_required(*ADMIN)
+def monthly_report(request):
+    """Billed, collected and outstanding for one month. Add ?export=csv for a file."""
+    import re
+
+    month = request.GET.get("month", "").strip()
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        month = f"{timezone.localdate():%Y-%m}"
+    report = services.monthly_report(int(month[:4]), int(month[5:]))
+    if request.GET.get("export") == "csv":
+        response = HttpResponse(services.monthly_report_csv(report), content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="revenue-{month}.csv"'
+        return response
+    return render(request, "billing/monthly_report.html", {"r": report, "month": month})
+
+
+# ------------------------------------------------------------ M-Pesa STK Push
+
+
+@role_required(*CASHIER)
+@require_POST
+def stk_push(request, pk):
+    invoice = get_object_or_404(Invoice.objects.select_related("patient"), pk=pk)
+    form = StkForm(request.POST)
+    try:
+        if not form.is_valid():
+            raise ValidationError("Enter the patient's number and a whole-shilling amount.")
+        prompt = mpesa.start_prompt(invoice, form.cleaned_data["phone"], form.cleaned_data["amount"], request.user)
+        messages.success(request, f"Prompt sent to {prompt.phone}. Ask the patient to enter their M-Pesa PIN.")
+    except (ValidationError, PermissionError) as exc:
+        _errors(request, exc)
+    return redirect("invoice_detail", pk=invoice.pk)
+
+
+@csrf_exempt
+@require_POST
+def mpesa_stk_callback(request, secret):
+    """M-Pesa's answer to a prompt. The secret in the address is the only check, so keep it private."""
+    configured = getattr(settings, "MPESA_STK_CALLBACK_SECRET", "")
+    if not configured:
+        raise Http404
+    if not hmac.compare_digest(secret, configured):
+        raise PermissionDenied
+    try:
+        mpesa.handle_stk_callback(json.loads(request.body))
+    except (ValueError, ValidationError):
+        return JsonResponse({"ResultCode": 1, "ResultDesc": "Rejected"}, status=400)
+    return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"})
 
 
 # ------------------------------------------------------------ M-Pesa

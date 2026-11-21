@@ -328,3 +328,34 @@ class ClaimLine(AuditedModel):
 
     def delete(self, *args, **kwargs):
         raise PermissionError("Claim lines cannot be deleted.")
+
+
+class MpesaPrompt(AuditedModel):
+    """An M-Pesa payment request (STK Push) sent to a patient's phone. The payment is recorded when M-Pesa confirms."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Waiting for the patient"
+        SUCCESS = "success", "Paid"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled by the patient"
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="mpesa_prompts")
+    phone = models.CharField(max_length=15)
+    amount = models.DecimalField(**MONEY)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    checkout_request_id = models.CharField(max_length=64, blank=True, db_index=True)
+    merchant_request_id = models.CharField(max_length=64, blank=True)
+    result_desc = models.CharField(max_length=200, blank=True)
+    mpesa_code = models.CharField(max_length=20, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"M-Pesa prompt {self.pk} for {self.invoice}"
+
+    def delete(self, *args, **kwargs):
+        raise PermissionError("M-Pesa prompts cannot be deleted.")

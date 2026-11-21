@@ -27,4 +27,7 @@ urlpatterns = [
     path("claims/<int:pk>/", views.claim_detail, name="claim_detail"),
     path("claims/<int:pk>/<str:action>/", views.claim_action, name="claim_action"),
     path("mpesa/confirm/", views.mpesa_confirmation, name="mpesa_confirm"),
+    path("mpesa/stk/<str:secret>/callback/", views.mpesa_stk_callback, name="mpesa_stk_callback"),
+    path("invoice/<int:pk>/stk/", views.stk_push, name="invoice_stk"),
+    path("report/monthly/", views.monthly_report, name="monthly_report"),
 ]

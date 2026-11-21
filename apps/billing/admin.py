@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from apps.core.appendonly import ReadOnlyAdmin
 
-from .models import CashUp, Claim, ClaimLine, Invoice, InvoiceLine, ItemPrice, Payment, ServiceItem
+from .models import CashUp, Claim, ClaimLine, Invoice, InvoiceLine, ItemPrice, MpesaPrompt, Payment, ServiceItem
 
 
 class PriceInline(admin.TabularInline):
@@ -51,3 +51,9 @@ class ClaimAdmin(ReadOnlyAdmin, admin.ModelAdmin):
     list_display = ("number", "payer_kind", "status", "batch", "amount_claimed")
     list_filter = ("status", "payer_kind", "batch")
     inlines = [ClaimLineInline]
+
+
+@admin.register(MpesaPrompt)
+class MpesaPromptAdmin(ReadOnlyAdmin, admin.ModelAdmin):
+    list_display = ("invoice", "phone", "amount", "status", "mpesa_code", "created_at")
+    list_filter = ("status",)

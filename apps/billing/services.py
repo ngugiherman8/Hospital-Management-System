@@ -4,10 +4,12 @@ import csv
 import datetime
 import io
 import logging
+import re
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.db.models import Sum
 from django.utils import timezone
 
@@ -288,7 +290,7 @@ def take_payment(invoice, method, amount, user, mpesa_code="", reference=""):
     return payment
 
 
-def record_mpesa_confirmation(invoice_number, code, amount):
+def record_mpesa_confirmation(invoice_number, code, amount, user=None, reference="Automatic confirmation"):
     """Handle a payment confirmation from M-Pesa. Safe to call twice with the same code.
 
     Returns (payment, created). The second and later calls with a code return the first payment.
@@ -310,7 +312,8 @@ def record_mpesa_confirmation(invoice_number, code, amount):
                     method=Payment.Method.MPESA,
                     amount=amount,
                     mpesa_code=code,
-                    reference="Automatic confirmation",
+                    reference=reference,
+                    received_by=user,
                 )
         except IntegrityError:
             return Payment.objects.get(mpesa_code=code, amount__gt=0), False
@@ -398,6 +401,22 @@ def day_reconciliation(day):
 # ---------------------------------------------------------------- claims
 
 
+SHA_NUMBER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9/\-]{3,29}$")
+
+
+def validate_member_number(payer_kind, member_number):
+    """SHA rejects claims without the member's number, so refuse to make or resubmit one without it."""
+    if payer_kind != PayerKind.SHA:
+        return
+    number = (member_number or "").strip()
+    if not number:
+        raise ValidationError("A SHA claim needs the patient's SHA number. Add it to the patient's record first.")
+    if not SHA_NUMBER.match(number):
+        raise ValidationError(
+            "The SHA number looks wrong. Use 4 to 30 letters, digits, dashes or slashes, with no spaces."
+        )
+
+
 def create_claim(invoice, user, patient_portion=0):
     """Claim the invoice from the payer. `patient_portion` is the co-pay the patient pays at the till instead."""
     patient_portion = _money(patient_portion or 0)
@@ -407,6 +426,7 @@ def create_claim(invoice, user, patient_portion=0):
         raise ValidationError("Finalise the invoice before making a claim.")
     if hasattr(invoice, "claim"):
         raise ValidationError("This invoice already has a claim.")
+    validate_member_number(invoice.payer_kind, invoice.member_number)
     if patient_portion < 0 or patient_portion >= invoice.total:
         raise ValidationError("The patient's co-pay must be between 0 and less than the invoice total.")
     diagnoses = ""
@@ -454,7 +474,8 @@ def reject_claim(claim, reason):
 def correct_claim(claim, member_number, diagnoses):
     """Fix the details of a rejected claim and return it to draft, ready to export again."""
     _claim_move(claim, ("rejected",), Claim.Status.DRAFT)
-    claim.member_number = member_number
+    validate_member_number(claim.payer_kind, member_number)
+    claim.member_number = member_number.strip()
     claim.diagnoses = diagnoses
     claim.resubmissions += 1
     claim.save()
@@ -567,7 +588,7 @@ def insurer_reconciliation(batch):
 CLAIM_COLUMNS = [
     "claim_number", "payer", "payer_name", "member_number", "hospital_number", "patient", "visit_date",
     "diagnoses", "invoice_number", "line_description", "quantity", "unit_price", "line_amount", "claim_total",
-    "resubmission", "patient_portion",
+    "resubmission", "patient_portion", "facility_code",
 ]  # fmt: skip
 
 
@@ -577,6 +598,9 @@ def export_claims(claims, mark_submitted=True):
     writer = csv.writer(out)
     writer.writerow(CLAIM_COLUMNS)
     now = timezone.now()
+    from django.conf import settings
+
+    facility_code = getattr(settings, "HOSPITAL_FACILITY_CODE", "")
     for claim in claims.select_related("invoice__patient", "invoice__appointment").prefetch_related("lines"):
         patient = claim.invoice.patient
         visit = claim.invoice.appointment.visit_date if claim.invoice.appointment_id else ""
@@ -586,7 +610,7 @@ def export_claims(claims, mark_submitted=True):
                     claim.number, claim.get_payer_kind_display(), claim.payer_name, claim.member_number,
                     patient.hospital_number, patient.full_name, visit, claim.diagnoses, claim.invoice.number,
                     line.description, line.quantity, line.unit_price, line.amount, claim.amount_claimed,
-                    claim.resubmissions, claim.patient_portion,
+                    claim.resubmissions, claim.patient_portion, facility_code,
                 ]
             )  # fmt: skip
         if mark_submitted and claim.status == Claim.Status.DRAFT:
@@ -668,3 +692,106 @@ def clearance_status(appointment):
         )
 
     return True, "All invoices settled or claimed."
+
+
+# ---------------------------------------------------------------- monthly report
+
+
+def _month_bounds(year, month):
+    start = timezone.make_aware(datetime.datetime(year, month, 1))
+    end = timezone.make_aware(datetime.datetime(year + (month == 12), month % 12 + 1, 1))
+    return start, end
+
+
+def monthly_report(year, month):
+    """What was billed, collected and is still owed for one month.
+
+    Billed: invoices finalised in the month (void ones left out), by payer and by kind of service.
+    Collected: money received or refunded in the month, by method (it may belong to earlier invoices).
+    Outstanding: what is still unpaid today on the invoices finalised in the month.
+    """
+    start, end = _month_bounds(year, month)
+    invoices = Invoice.objects.filter(finalised_at__gte=start, finalised_at__lt=end).exclude(
+        status__in=(Invoice.Status.DRAFT, Invoice.Status.VOID)
+    )
+    lines = InvoiceLine.objects.filter(invoice__in=invoices, removed_at__isnull=True)
+    payer_labels = dict(PayerKind.choices)
+    category_labels = dict(ServiceItem.Category.choices)
+    method_labels = dict(Payment.Method.choices)
+
+    billed = {r["invoice__payer_kind"]: r["t"] for r in lines.values("invoice__payer_kind").annotate(t=Sum("amount"))}
+    paid = {
+        r["invoice__payer_kind"]: r["t"]
+        for r in Payment.objects.filter(invoice__in=invoices).values("invoice__payer_kind").annotate(t=Sum("amount"))
+    }
+    counts = {r["payer_kind"]: r["n"] for r in invoices.values("payer_kind").annotate(n=Count("id"))}
+    by_payer = []
+    for kind in sorted(billed, key=lambda k: payer_labels.get(k, k)):
+        b, p = billed[kind], paid.get(kind) or ZERO
+        by_payer.append(
+            {"payer": payer_labels.get(kind, kind), "invoices": counts.get(kind, 0), "billed": b, "paid": p, "outstanding": b - p}
+        )
+    by_category = [
+        {"category": category_labels.get(r["service__category"], r["service__category"]), "billed": r["t"]}
+        for r in lines.values("service__category").annotate(t=Sum("amount")).order_by("-t")
+    ]
+    payments = Payment.objects.filter(created_at__gte=start, created_at__lt=end)
+    collected = [
+        {"method": method_labels.get(r["method"], r["method"]), "amount": r["t"]}
+        for r in payments.values("method").annotate(t=Sum("amount")).order_by("method")
+    ]
+    claim_rows = [
+        {"status": Claim.Status(r["status"]).label, "claims": r["n"], "claimed": r["t"]}
+        for r in Claim.objects.filter(batch=f"{year}-{month:02d}")
+        .values("status")
+        .annotate(n=Count("id"), t=Sum("amount_claimed"))
+        .order_by("status")
+    ]
+    total_billed = sum((r["billed"] for r in by_payer), ZERO)
+    total_paid = sum((r["paid"] for r in by_payer), ZERO)
+    return {
+        "year": year,
+        "month": month,
+        "label": f"{year}-{month:02d}",
+        "by_payer": by_payer,
+        "by_category": by_category,
+        "collected": collected,
+        "claims": claim_rows,
+        "totals": {
+            "invoices": sum((r["invoices"] for r in by_payer), 0),
+            "billed": total_billed,
+            "paid": total_paid,
+            "outstanding": total_billed - total_paid,
+            "collected": sum((r["amount"] for r in collected), ZERO),
+        },
+    }
+
+
+def monthly_report_csv(report):
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Monthly revenue report", report["label"]])
+    w.writerow([])
+    w.writerow(["Billed by payer"])
+    w.writerow(["payer", "invoices", "billed", "paid_to_date", "outstanding"])
+    for r in report["by_payer"]:
+        w.writerow([r["payer"], r["invoices"], r["billed"], r["paid"], r["outstanding"]])
+    t = report["totals"]
+    w.writerow(["Total", t["invoices"], t["billed"], t["paid"], t["outstanding"]])
+    w.writerow([])
+    w.writerow(["Billed by kind of service"])
+    w.writerow(["category", "billed"])
+    for r in report["by_category"]:
+        w.writerow([r["category"], r["billed"]])
+    w.writerow([])
+    w.writerow(["Collected in the month, by method"])
+    w.writerow(["method", "amount"])
+    for r in report["collected"]:
+        w.writerow([r["method"], r["amount"]])
+    w.writerow(["Total", t["collected"]])
+    w.writerow([])
+    w.writerow(["Claims for visits in the month"])
+    w.writerow(["status", "claims", "claimed"])
+    for r in report["claims"]:
+        w.writerow([r["status"], r["claims"], r["claimed"]])
+    return out.getvalue()

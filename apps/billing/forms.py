@@ -66,3 +66,8 @@ class ClaimPortionForm(forms.Form):
     patient_portion = forms.DecimalField(
         max_digits=12, decimal_places=2, min_value=0, required=False, initial=0, label="Patient co-pay"
     )
+
+
+class StkForm(forms.Form):
+    phone = forms.CharField(max_length=20, label="Patient's M-Pesa number")
+    amount = forms.IntegerField(min_value=1, label="Amount (whole KES)")
