@@ -24,5 +24,10 @@ extend-exclude = ["migrations"]
 select = ["E", "F", "I", "B", "UP", "DJ"]
 ignore = ["DJ001"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config", "conftest"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
+# Old demo-data command, kept for reference: long lines are formatted by hand.
+"apps/core/management/commands/seed_sample_data.py" = ["E501"]
