@@ -287,10 +287,14 @@ class Claim(AuditedModel):
     batch = models.CharField(max_length=7, db_index=True, help_text="Month of the visit, YYYY-MM.")
     amount_claimed = models.DecimalField(**MONEY, editable=False)
     amount_approved = models.DecimalField(**MONEY, null=True, blank=True)
+    patient_portion = models.DecimalField(
+        **MONEY, default=ZERO, help_text="The patient's co-pay. It is not part of the amount claimed from the payer."
+    )
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT, db_index=True)
     rejection_reason = models.CharField(max_length=300, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
+    last_followed_up_at = models.DateTimeField(null=True, blank=True, editable=False)
     resubmissions = models.PositiveSmallIntegerField(default=0, editable=False)
 
     class Meta:

@@ -60,3 +60,9 @@ class ClaimAmountForm(forms.Form):
 class ClaimFilterForm(forms.Form):
     month = forms.CharField(required=False, max_length=7, label="Month (YYYY-MM)")
     status = forms.ChoiceField(choices=[("", "Any status")] + Claim.Status.choices, required=False)
+
+
+class ClaimPortionForm(forms.Form):
+    patient_portion = forms.DecimalField(
+        max_digits=12, decimal_places=2, min_value=0, required=False, initial=0, label="Patient co-pay"
+    )

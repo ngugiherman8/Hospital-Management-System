@@ -23,6 +23,7 @@ from .forms import (
     ClaimAmountForm,
     ClaimCorrectForm,
     ClaimFilterForm,
+    ClaimPortionForm,
     PaymentForm,
     ReasonForm,
     RefundForm,
@@ -200,7 +201,10 @@ def refund(request, invoice):
 
 @_invoice_post
 def create_claim(request, invoice):
-    claim = services.create_claim(invoice, request.user)
+    form = ClaimPortionForm(request.POST)
+    if not form.is_valid():
+        raise ValidationError("Enter the patient's co-pay as an amount, or leave it at 0.")
+    claim = services.create_claim(invoice, request.user, form.cleaned_data["patient_portion"] or 0)
     messages.success(request, f"Claim {claim.number} created.")
 
 
@@ -288,6 +292,48 @@ def claim_list(request):
         if form.cleaned_data["status"]:
             qs = qs.filter(status=form.cleaned_data["status"])
     return render(request, "billing/claim_list.html", {"claims": qs[:200], "form": form})
+
+
+@role_required(*CASHIER)
+def claim_followup(request):
+    """Claims still waiting on the payer, oldest first, so none is forgotten."""
+    payer = request.GET.get("payer", "")
+    payer = payer if payer in ("sha", "insurer", "corporate") else ""
+    rows = services.claim_ageing(payer or None)
+    return render(
+        request,
+        "billing/claim_followup.html",
+        {
+            "rows": rows,
+            "payer": payer,
+            "overdue_days": services.claim_overdue_days(),
+            "overdue_count": sum(1 for r in rows if r["overdue"]),
+            "outstanding": sum((r["claim"].amount_claimed for r in rows), Decimal("0.00")),
+        },
+    )
+
+
+@role_required(*CASHIER)
+@require_POST
+def claim_followup_mark(request):
+    ids = [int(i) for i in request.POST.getlist("claim") if i.isdigit()]
+    if not ids:
+        messages.error(request, "Tick at least one claim.")
+    else:
+        done = services.follow_up_claims(Claim.objects.filter(pk__in=ids), request.user)
+        messages.success(request, f"{done} claim(s) marked as followed up today.")
+    return redirect("claim_followup")
+
+
+@role_required(*ADMIN)
+def claim_reconciliation(request):
+    """Claimed, approved, paid, rejected, outstanding and written off, per payer, for one month."""
+    import re
+
+    month = request.GET.get("month", "").strip()
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        month = f"{timezone.localdate():%Y-%m}"
+    return render(request, "billing/claim_reconciliation.html", {"r": services.insurer_reconciliation(month), "month": month})
 
 
 @role_required(*CASHIER)

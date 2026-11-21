@@ -398,13 +398,17 @@ def day_reconciliation(day):
 # ---------------------------------------------------------------- claims
 
 
-def create_claim(invoice, user):
+def create_claim(invoice, user, patient_portion=0):
+    """Claim the invoice from the payer. `patient_portion` is the co-pay the patient pays at the till instead."""
+    patient_portion = _money(patient_portion or 0)
     if invoice.payer_kind not in CLAIM_PAYERS:
         raise ValidationError("Only invoices for SHA, insurers or corporate payers have claims.")
     if invoice.status in (Invoice.Status.DRAFT, Invoice.Status.VOID):
         raise ValidationError("Finalise the invoice before making a claim.")
     if hasattr(invoice, "claim"):
         raise ValidationError("This invoice already has a claim.")
+    if patient_portion < 0 or patient_portion >= invoice.total:
+        raise ValidationError("The patient's co-pay must be between 0 and less than the invoice total.")
     diagnoses = ""
     if invoice.appointment_id:
         consultation = getattr(invoice.appointment, "consultation", None)
@@ -419,7 +423,8 @@ def create_claim(invoice, user):
             member_number=invoice.member_number,
             diagnoses=diagnoses,
             batch=f"{visit_date:%Y-%m}",
-            amount_claimed=invoice.total,
+            amount_claimed=invoice.total - patient_portion,
+            patient_portion=patient_portion,
         )
         for line in invoice.active_lines:
             ClaimLine.objects.create(
@@ -471,10 +476,98 @@ def mark_claim_paid(claim, user, amount, reference=""):
         claim.save()
 
 
+OPEN_CLAIM_STATUSES = (Claim.Status.SUBMITTED, Claim.Status.APPROVED)
+
+
+def claim_overdue_days():
+    from django.conf import settings
+
+    return getattr(settings, "CLAIM_OVERDUE_DAYS", 30)
+
+
+def claim_ageing(payer_kind=None, today=None):
+    """Claims sent to a payer and not yet paid, oldest first, with the days they have been outstanding."""
+    today = today or timezone.localdate()
+    limit = claim_overdue_days()
+    claims = Claim.objects.filter(status__in=OPEN_CLAIM_STATUSES).select_related("invoice__patient")
+    if payer_kind:
+        claims = claims.filter(payer_kind=payer_kind)
+    rows = []
+    for claim in claims:
+        sent = timezone.localtime(claim.submitted_at).date() if claim.submitted_at else today
+        days = (today - sent).days
+        last = timezone.localtime(claim.last_followed_up_at).date() if claim.last_followed_up_at else None
+        rows.append(
+            {
+                "claim": claim,
+                "days": days,
+                "overdue": days > limit,
+                "since_follow_up": (today - last).days if last else None,
+            }
+        )
+    rows.sort(key=lambda r: (-r["days"], r["claim"].pk))
+    return rows
+
+
+def follow_up_claims(claims, user=None):
+    """Note that the payer was chased today. Only claims that are still waiting on the payer are stamped."""
+    now = timezone.now()
+    done = 0
+    for claim in claims:
+        if claim.status in OPEN_CLAIM_STATUSES:
+            claim.last_followed_up_at = now
+            claim.save(update_fields=["last_followed_up_at", "updated_at"])
+            done += 1
+    return done
+
+
+def insurer_reconciliation(batch):
+    """For one month of visits, per payer: what was claimed, approved, paid, rejected, still outstanding and written off."""
+    labels = dict(PayerKind.choices)
+    groups = {}
+    claims = Claim.objects.filter(batch=batch).select_related("invoice").prefetch_related("invoice__payments")
+    for claim in claims:
+        key = (claim.payer_kind, claim.payer_name)
+        g = groups.setdefault(
+            key,
+            {
+                "payer": f"{labels.get(claim.payer_kind, claim.payer_kind)} {claim.payer_name}".strip(),
+                "claims": 0,
+                "claimed": ZERO,
+                "approved": ZERO,
+                "paid": ZERO,
+                "not_sent": ZERO,
+                "outstanding": ZERO,
+                "rejected": ZERO,
+                "write_off": ZERO,
+                "patient_portion": ZERO,
+            },
+        )
+        paid = sum((p.amount for p in claim.invoice.payments.all() if p.method == Payment.Method.INSURER), ZERO)
+        g["claims"] += 1
+        g["claimed"] += claim.amount_claimed
+        g["patient_portion"] += claim.patient_portion
+        g["paid"] += paid
+        if claim.status != Claim.Status.REJECTED and claim.amount_approved is not None:
+            g["approved"] += claim.amount_approved
+        if claim.status == Claim.Status.DRAFT:
+            g["not_sent"] += claim.amount_claimed
+        elif claim.status == Claim.Status.REJECTED:
+            g["rejected"] += claim.amount_claimed
+        elif claim.status == Claim.Status.PAID:
+            g["write_off"] += max(claim.amount_claimed - paid, ZERO)
+        else:
+            g["outstanding"] += claim.amount_claimed - paid
+    rows = sorted(groups.values(), key=lambda g: g["payer"])
+    keys = ("claims", "claimed", "approved", "paid", "not_sent", "outstanding", "rejected", "write_off", "patient_portion")
+    totals = {k: sum((r[k] for r in rows), 0 if k == "claims" else ZERO) for k in keys}
+    return {"batch": batch, "rows": rows, "totals": totals}
+
+
 CLAIM_COLUMNS = [
     "claim_number", "payer", "payer_name", "member_number", "hospital_number", "patient", "visit_date",
     "diagnoses", "invoice_number", "line_description", "quantity", "unit_price", "line_amount", "claim_total",
-    "resubmission",
+    "resubmission", "patient_portion",
 ]  # fmt: skip
 
 
@@ -493,7 +586,7 @@ def export_claims(claims, mark_submitted=True):
                     claim.number, claim.get_payer_kind_display(), claim.payer_name, claim.member_number,
                     patient.hospital_number, patient.full_name, visit, claim.diagnoses, claim.invoice.number,
                     line.description, line.quantity, line.unit_price, line.amount, claim.amount_claimed,
-                    claim.resubmissions,
+                    claim.resubmissions, claim.patient_portion,
                 ]
             )  # fmt: skip
         if mark_submitted and claim.status == Claim.Status.DRAFT:
@@ -548,6 +641,15 @@ def clearance_status(appointment):
                     f"({claim.rejection_reason or 'no reason recorded'}). "
                     f"Correct and resubmit it, or collect from the patient directly."
                 )
+            if claim.patient_portion > ZERO:
+                from_patient = (
+                    inv.payments.exclude(method=Payment.Method.INSURER).aggregate(t=Sum("amount"))["t"] or ZERO
+                )
+                if from_patient < claim.patient_portion:
+                    return False, (
+                        f"Invoice {inv.number}: the patient's co-pay, KES {claim.patient_portion - from_patient}, "
+                        f"has not been collected."
+                    )
         else:
             # Cash / M-Pesa / Card: full payment expected before discharge.
             if inv.balance > ZERO:
