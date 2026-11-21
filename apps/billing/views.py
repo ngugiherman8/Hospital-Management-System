@@ -106,6 +106,28 @@ def invoice_print(request, pk):
     return render(request, "billing/invoice_print.html", _invoice_context(invoice, request))
 
 
+@role_required(*CASHIER)
+def receipt(request, pk):
+    """Printable receipt for a single payment (or refund)."""
+    from .models import Payment
+
+    payment = get_object_or_404(
+        Payment.objects.select_related("invoice__patient", "received_by"),
+        pk=pk,
+    )
+    log_access(payment)
+    return render(
+        request,
+        "billing/receipt.html",
+        {
+            "pay": payment,
+            "invoice": payment.invoice,
+            "patient": payment.invoice.patient,
+            "lines": payment.invoice.active_lines.select_related("service"),
+        },
+    )
+
+
 def _invoice_post(view):
     """Shared shape of the POST actions: load the invoice, run the action, report, go back."""
 

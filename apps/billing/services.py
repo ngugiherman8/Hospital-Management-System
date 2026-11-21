@@ -460,3 +460,68 @@ def export_claims(claims, mark_submitted=True):
             claim.submitted_at = now
             claim.save()
     return out.getvalue()
+
+
+# ---------------------------------------------------------------- patient clearance
+
+def clearance_status(appointment):
+    """Check whether a visit is financially clear to discharge.
+
+    Returns (cleared: bool, reason: str).
+
+    Rules:
+    - At least one non-void invoice must exist.
+    - No invoice may still be a draft (must be finalised).
+    - Cash / M-Pesa / Card payers: balance must be zero.
+    - SHA / Insurer / Corporate payers: a claim must exist and must not be
+      in REJECTED status (submitted, approved, or paid all pass).
+    - No unresolved ChargeAlerts may remain on the visit.
+    """
+    from .models import ChargeAlert, Claim
+
+    invoices = list(
+        Invoice.objects.filter(appointment=appointment).exclude(status=Invoice.Status.VOID)
+    )
+
+    if not invoices:
+        return False, "No invoice has been raised for this visit."
+
+    for inv in invoices:
+        if inv.status == Invoice.Status.DRAFT:
+            label = inv.number if inv.number else f"draft (id {inv.pk})"
+            return False, f"Invoice {label} has not been finalised yet."
+
+        if inv.payer_kind in CLAIM_PAYERS:
+            try:
+                claim = inv.claim
+            except Claim.DoesNotExist:
+                claim = None
+            if claim is None:
+                return False, (
+                    f"Invoice {inv.number}: no claim has been created for this "
+                    f"{inv.get_payer_kind_display()} patient. Create the claim before discharging."
+                )
+            if claim.status == Claim.Status.REJECTED:
+                return False, (
+                    f"Claim {claim.number} was rejected "
+                    f"({claim.rejection_reason or 'no reason recorded'}). "
+                    f"Correct and resubmit it, or collect from the patient directly."
+                )
+        else:
+            # Cash / M-Pesa / Card: full payment expected before discharge.
+            if inv.balance > ZERO:
+                return False, (
+                    f"Invoice {inv.number}: KES {inv.balance} is still outstanding. "
+                    f"Collect payment or create a claim before discharging."
+                )
+
+    unresolved_alerts = ChargeAlert.objects.filter(
+        appointment=appointment, resolved_at__isnull=True
+    ).exists()
+    if unresolved_alerts:
+        return False, (
+            "There are unresolved charge alerts on this visit. "
+            "Open the invoice, resolve the alerts, then discharge."
+        )
+
+    return True, "All invoices settled or claimed."

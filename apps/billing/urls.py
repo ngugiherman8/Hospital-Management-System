@@ -7,6 +7,7 @@ urlpatterns = [
     path("visit/<int:pk>/", views.visit_invoices, name="visit_invoices"),
     path("invoice/<int:pk>/", views.invoice_detail, name="invoice_detail"),
     path("invoice/<int:pk>/print/", views.invoice_print, name="invoice_print"),
+    path("payment/<int:pk>/receipt/", views.receipt, name="payment_receipt"),
     path("invoice/<int:pk>/add-line/", views.add_line, name="invoice_add_line"),
     path("invoice/<int:pk>/remove-line/", views.remove_line, name="invoice_remove_line"),
     path("invoice/<int:pk>/finalise/", views.finalise, name="invoice_finalise"),
