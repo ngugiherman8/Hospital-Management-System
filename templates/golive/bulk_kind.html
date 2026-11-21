@@ -3,7 +3,9 @@
 {% block content %}
 <div class="head"><div><div class="crumb"><a href="{% url 'bulk_index' %}">Bulk import</a></div><h1>Import: {{ importer.title }}</h1><p class="sub">{{ importer.blurb }}</p></div></div>
 <section class="card"><h2>1. Get the template</h2>
-<p><a class="btn" href="{% url 'bulk_template' importer.key %}">Download template (CSV)</a></p>
+<div class="row"><a class="btn" href="{% url 'bulk_template' importer.key %}">Blank template (CSV)</a>
+{% if importer.starter %}<a class="btn primary" href="{% url 'bulk_starter' importer.key %}">Starter data with {{ importer.starter|length }} common entries (CSV)</a>{% endif %}</div>
+{% if importer.starter %}<p class="sub">The starter file is ready to upload as it is. Delete the rows you do not need, add your own, and fill in prices (they are left blank because every hospital sets its own).</p>{% endif %}
 <div class="scroll"><table style="min-width:560px"><thead><tr><th>Column</th><th>Needed?</th><th>Notes</th></tr></thead><tbody>
 {% for name, required, note in importer.columns %}<tr><td><code>{{ name }}</code></td><td>{% if required %}<b>Yes</b>{% else %}Optional{% endif %}</td><td>{{ note }}</td></tr>{% endfor %}
 </tbody></table></div></section>

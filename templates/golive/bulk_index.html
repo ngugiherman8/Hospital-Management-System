@@ -2,10 +2,11 @@
 {% block title %}Bulk import{% endblock %}
 {% block content %}
 <div class="head"><div><div class="crumb">Administration</div><h1>Bulk import</h1>
+<div class="row"><a class="btn primary" href="{% url 'bulk_zip' %}">Download all templates and starter data (ZIP)</a></div>
 <p class="sub">Add many records at once from a CSV file (in Excel: File, Save As, CSV). You always see a preview first, and nothing is saved until you confirm. Importing the same file twice does not create duplicates.</p></div></div>
-<section class="card"><div class="scroll"><table style="min-width:640px"><thead><tr><th>What to import</th><th>About</th><th></th></tr></thead><tbody>
+<section class="card"><div class="scroll"><table style="min-width:760px"><thead><tr><th>What to import</th><th>About</th><th></th></tr></thead><tbody>
 {% for i in importers %}<tr><td><b>{{ forloop.counter }}. {{ i.title }}</b></td><td>{{ i.blurb }}</td>
-<td style="text-align:right"><div class="row" style="justify-content:flex-end"><a class="btn small" href="{% url 'bulk_template' i.key %}">Template</a><a class="btn small" href="{% url 'bulk_kind' i.key %}">Import</a></div></td></tr>{% endfor %}
+<td style="text-align:right"><div class="row" style="justify-content:flex-end"><a class="btn small" href="{% url 'bulk_template' i.key %}">Blank template</a>{% if i.starter %}<a class="btn small" href="{% url 'bulk_starter' i.key %}">Starter data ({{ i.starter|length }})</a>{% endif %}<a class="btn small" href="{% url 'bulk_kind' i.key %}">Import</a></div></td></tr>{% endfor %}
 </tbody></table></div>
 <p class="sub">Suggested order for a new hospital: imaging modalities, drugs, tests, prices, wards, suppliers, departments, then opening stock and patients.</p></section>
 {% endblock %}
