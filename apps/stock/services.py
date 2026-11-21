@@ -142,7 +142,7 @@ def dispense(item, quantity, user):
         visit = item.prescription.consultation.appointment
         billing.post_charge(
             visit.patient,
-            billing.ServiceItem.objects.filter(drug=item.drug, is_active=True).first(),
+            billing.service_for_drug(item.drug),
             quantity=quantity,
             appointment=visit,
             source_key=f"dispense:{moves[0].pk}",
