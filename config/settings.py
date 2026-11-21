@@ -24,7 +24,13 @@ if not SECRET_KEY:
         raise RuntimeError("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is off.")
 
 ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
+if env("VERCEL"):
+    ALLOWED_HOSTS += [".vercel.app"]
+    if env("VERCEL_PROJECT_PRODUCTION_URL"):
+        ALLOWED_HOSTS.append(env("VERCEL_PROJECT_PRODUCTION_URL"))
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+if env("VERCEL_PROJECT_PRODUCTION_URL"):
+    CSRF_TRUSTED_ORIGINS.append("https://" + env("VERCEL_PROJECT_PRODUCTION_URL"))
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -89,21 +95,40 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("POSTGRES_DB", "hms"),
-        # POSTGRES_USER is the account the running website uses. In production it has only the rights it needs
-        # (see apply_db_grants). Migrations and apply_db_grants run as the owner when HMS_USE_OWNER_DB is true.
-        "USER": env("POSTGRES_OWNER_USER", "hms") if env("HMS_USE_OWNER_DB") == "true" else env("POSTGRES_USER", "hms"),
-        "PASSWORD": env("POSTGRES_OWNER_PASSWORD", "hms")
-        if env("HMS_USE_OWNER_DB") == "true"
-        else env("POSTGRES_PASSWORD", "hms"),
-        "HOST": env("POSTGRES_HOST", "localhost"),
-        "PORT": env("POSTGRES_PORT", "5432"),
-        "CONN_MAX_AGE": 60,
+if env("DATABASE_URL"):
+    # Hosted database (Supabase, Neon, Vercel Postgres...). Used on Vercel, where there is no local PostgreSQL.
+    from urllib.parse import unquote, urlparse
+
+    _u = urlparse(env("DATABASE_URL"))
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": _u.path.lstrip("/") or "postgres",
+            "USER": unquote(_u.username or ""),
+            "PASSWORD": unquote(_u.password or ""),
+            "HOST": _u.hostname,
+            "PORT": str(_u.port or 5432),
+            "CONN_MAX_AGE": 0,  # serverless: do not hold connections between requests
+            "OPTIONS": {"sslmode": "require"},
+            "DISABLE_SERVER_SIDE_CURSORS": True,  # needed behind a transaction pooler
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": env("POSTGRES_DB", "hms"),
+            # POSTGRES_USER is the account the running website uses. In production it has only the rights it needs
+            # (see apply_db_grants). Migrations and apply_db_grants run as the owner when HMS_USE_OWNER_DB is true.
+            "USER": env("POSTGRES_OWNER_USER", "hms") if env("HMS_USE_OWNER_DB") == "true" else env("POSTGRES_USER", "hms"),
+            "PASSWORD": env("POSTGRES_OWNER_PASSWORD", "hms")
+            if env("HMS_USE_OWNER_DB") == "true"
+            else env("POSTGRES_PASSWORD", "hms"),
+            "HOST": env("POSTGRES_HOST", "localhost"),
+            "PORT": env("POSTGRES_PORT", "5432"),
+            "CONN_MAX_AGE": 60,
+        }
+    }
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
