@@ -538,3 +538,156 @@ def test_followup_and_reconciliation_pages(login, sha_invoice, cashier, admin_us
     assert login(admin_user).get("/billing/claims/reconciliation/").status_code == 200
     r = login(cashier).post(f"/billing/invoice/{sha_invoice.pk}/claim/", {"patient_portion": "abc"})
     assert r.status_code == 302 and not Claim.objects.exists()
+
+
+# ---------- P3: SHA checks, revenue report, M-Pesa prompts ----------
+
+
+def test_sha_claim_needs_a_sensible_member_number(sha_invoice, cashier):
+    Invoice.objects.filter(pk=sha_invoice.pk).update(member_number="")
+    sha_invoice.refresh_from_db()
+    with pytest.raises(ValidationError):
+        services.create_claim(sha_invoice, cashier)  # blank
+    Invoice.objects.filter(pk=sha_invoice.pk).update(member_number="ab c")
+    sha_invoice.refresh_from_db()
+    with pytest.raises(ValidationError):
+        services.create_claim(sha_invoice, cashier)  # spaces
+    Invoice.objects.filter(pk=sha_invoice.pk).update(member_number="SHA-12345")
+    sha_invoice.refresh_from_db()
+    assert services.create_claim(sha_invoice, cashier).member_number == "SHA-12345"
+
+
+def test_a_rejected_sha_claim_cannot_be_corrected_to_a_bad_number(sha_invoice, cashier):
+    claim = services.create_claim(sha_invoice, cashier)
+    services.export_claims(Claim.objects.all())
+    claim.refresh_from_db()
+    services.reject_claim(claim, "Invalid member")
+    with pytest.raises(ValidationError):
+        services.correct_claim(claim, "  ", "B54 Malaria")
+    claim.refresh_from_db()
+    assert claim.status == "rejected"
+
+
+def test_claim_file_carries_the_facility_code(sha_invoice, cashier, settings):
+    settings.HOSPITAL_FACILITY_CODE = "FAC-777"
+    services.create_claim(sha_invoice, cashier)
+    text = services.export_claims(Claim.objects.all())
+    assert "facility_code" in text.splitlines()[0] and "FAC-777" in text
+
+
+def test_monthly_report_adds_up(invoice, cashier):
+    services.take_payment(invoice, "cash", D("400"), cashier)
+    today = timezone.localdate()
+    r = services.monthly_report(today.year, today.month)
+    t = r["totals"]
+    assert t["billed"] == invoice.total and t["paid"] == D("400.00") and t["collected"] == D("400.00")
+    assert t["outstanding"] == invoice.total - D("400")
+    assert sum(c["billed"] for c in r["by_category"]) == invoice.total
+    assert services.monthly_report_csv(r).startswith("Monthly revenue report")
+    empty = services.monthly_report(today.year - 1, 1)
+    assert empty["totals"]["billed"] == 0 and empty["by_payer"] == []
+
+
+def test_monthly_report_page_is_admin_only_and_exports(login, invoice, cashier, admin_user):
+    assert login(cashier).get("/billing/report/monthly/").status_code == 403
+    c = login(admin_user)
+    assert c.get("/billing/report/monthly/").status_code == 200
+    r = c.get("/billing/report/monthly/?export=csv")
+    assert r.status_code == 200 and r["Content-Type"].startswith("text/csv")
+
+
+@pytest.fixture
+def stk_settings(settings):
+    settings.MPESA_ENV = "sandbox"
+    settings.MPESA_CONSUMER_KEY = "key"
+    settings.MPESA_CONSUMER_SECRET = "secret"
+    settings.MPESA_SHORTCODE = "174379"
+    settings.MPESA_PASSKEY = "passkey"
+    settings.MPESA_STK_CALLBACK_BASE = "https://hms.example.org"
+    settings.MPESA_STK_CALLBACK_SECRET = "s3cret"
+    return settings
+
+
+def _fake_stk(monkeypatch, checkout="ws_CO_1"):
+    from apps.billing import mpesa
+
+    monkeypatch.setattr(
+        mpesa, "send_stk", lambda *a, **k: {"ResponseCode": "0", "CheckoutRequestID": checkout, "MerchantRequestID": "m1"}
+    )
+    return mpesa
+
+
+def test_phone_numbers_are_normalised_and_bad_ones_refused():
+    from apps.billing import mpesa
+
+    for raw in ("0712 345 678", "+254712345678", "254712345678", "712345678"):
+        assert mpesa.normalize_msisdn(raw) == "254712345678"
+    assert mpesa.normalize_msisdn("0112345678") == "254112345678"
+    for bad in ("12345", "0812345678", "", "07123456789"):
+        with pytest.raises(ValidationError):
+            mpesa.normalize_msisdn(bad)
+
+
+def test_prompts_are_off_until_configured(invoice, cashier):
+    from apps.billing import mpesa
+
+    assert not mpesa.is_configured()
+    with pytest.raises(ValidationError):
+        mpesa.start_prompt(invoice, "0712345678", 100, cashier)
+
+
+def test_a_prompt_is_sent_and_waits_for_confirmation(invoice, cashier, stk_settings, monkeypatch):
+    mpesa = _fake_stk(monkeypatch)
+    prompt = mpesa.start_prompt(invoice, "0712345678", 300, cashier)
+    assert prompt.status == "pending" and prompt.phone == "254712345678" and prompt.checkout_request_id == "ws_CO_1"
+    assert not invoice.payments.exists()  # nothing is recorded until M-Pesa confirms
+    with pytest.raises(ValidationError):
+        mpesa.start_prompt(invoice, "0712345678", invoice.total + 1, cashier)  # more than the balance
+    with pytest.raises(ValidationError):
+        mpesa.start_prompt(invoice, "0712345678", D("10.50"), cashier)  # not whole shillings
+
+
+def _stk_payload(checkout="ws_CO_1", code=0, receipt="QKL1ABC", amount=300):
+    callback = {"MerchantRequestID": "m1", "CheckoutRequestID": checkout, "ResultCode": code, "ResultDesc": "done"}
+    if code == 0:
+        callback["CallbackMetadata"] = {
+            "Item": [{"Name": "Amount", "Value": amount}, {"Name": "MpesaReceiptNumber", "Value": receipt}]
+        }
+    return {"Body": {"stkCallback": callback}}
+
+
+def test_confirmation_records_one_payment_even_if_sent_twice(client, invoice, cashier, stk_settings, monkeypatch):
+    import json
+
+    mpesa = _fake_stk(monkeypatch)
+    prompt = mpesa.start_prompt(invoice, "0712345678", 300, cashier)
+    url = "/billing/mpesa/stk/s3cret/callback/"
+    for _ in range(2):
+        r = client.post(url, data=json.dumps(_stk_payload()), content_type="application/json")
+        assert r.status_code == 200 and r.json()["ResultCode"] == 0
+    prompt.refresh_from_db()
+    pay = Payment.objects.get(mpesa_code="QKL1ABC")
+    assert prompt.status == "success" and pay.amount == D("300.00") and pay.received_by == cashier
+    assert Payment.objects.filter(invoice=invoice).count() == 1
+
+
+def test_a_cancelled_prompt_records_nothing(client, invoice, cashier, stk_settings, monkeypatch):
+    import json
+
+    mpesa = _fake_stk(monkeypatch)
+    prompt = mpesa.start_prompt(invoice, "0712345678", 300, cashier)
+    client.post(
+        "/billing/mpesa/stk/s3cret/callback/", data=json.dumps(_stk_payload(code=1032)), content_type="application/json"
+    )
+    prompt.refresh_from_db()
+    assert prompt.status == "cancelled" and not Payment.objects.filter(invoice=invoice).exists()
+
+
+def test_stk_callback_checks_the_secret(client, invoice, stk_settings, settings):
+    import json
+
+    body = json.dumps(_stk_payload())
+    assert client.post("/billing/mpesa/stk/wrong/callback/", data=body, content_type="application/json").status_code == 403
+    assert client.post("/billing/mpesa/stk/s3cret/callback/", data="nonsense", content_type="application/json").status_code == 400
+    settings.MPESA_STK_CALLBACK_SECRET = ""
+    assert client.post("/billing/mpesa/stk/s3cret/callback/", data=body, content_type="application/json").status_code == 404

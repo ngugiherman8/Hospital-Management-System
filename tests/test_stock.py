@@ -222,3 +222,28 @@ def test_receive_screen_creates_a_batch(login, drug, pharmacist, receipt):
     )
     assert r.status_code == 302
     assert StockBatch.objects.get(batch_number="NEW1").quantity == 30
+
+
+def test_dispensing_a_drug_added_after_the_price_list_still_raises_a_charge_alert(
+    stocked, patient, doctor, pharmacist, receipt
+):
+    """A drug with no billable item must not be dispensed silently: an unpriced item is made and an alert raised."""
+    from apps.billing.models import ChargeAlert, ServiceItem
+
+    new = Drug.objects.create(generic_name="Newdrug", strength="10 mg", form="Tablet")
+    assert not ServiceItem.objects.filter(drug=new).exists()
+    services.receive_stock(receipt, new, "N1", days(200), 10, 1, pharmacist)
+    services.dispense(make_item(patient, new, doctor, 5), 5, pharmacist)  # dispensing is never blocked
+    assert ServiceItem.objects.filter(drug=new).exists()
+    assert ChargeAlert.objects.filter(resolved_at__isnull=True, source_key__startswith="dispense:").exists()
+    assert not InvoiceLine.objects.filter(description__startswith="Newdrug").exists()
+
+
+def test_sync_service_items_creates_missing_items_once(db, catalogue):
+    from apps.billing.models import ServiceItem
+    from apps.billing.services import sync_service_items
+
+    Drug.objects.create(generic_name="Syncdrug", strength="5 mg", form="Tablet")
+    first = sync_service_items()
+    assert first >= 1 and ServiceItem.objects.filter(drug__generic_name="Syncdrug").count() == 1
+    assert sync_service_items() == 0
