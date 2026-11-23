@@ -134,6 +134,18 @@ Known limits: a deposit is an ordinary part payment on one invoice (nothing carr
 for insured visits is not modelled; credit notes for a finalised invoice are a void plus a new invoice; supplier
 payments are not tracked.
 
+## Patient journey
+
+One thread from the front door to the cashier, built on the visit (`Appointment`).
+
+- **Arrival** (`/appointments/arrival/`, reception): search by name, number, ID or phone. Found: start the visit (or check in a booked one). Not found: register, with the searched name already typed in. A patient already in today's queue cannot be started twice.
+- **Where is everyone?** (`/appointments/journey/`): one column per place (triage, waiting for doctor, with doctor, lab, imaging, pharmacy, ward, elsewhere, checkout) with minutes spent there.
+- **Sending on**: the clinician sends the patient to lab, imaging, pharmacy, back on the doctor's queue, checkout, or somewhere else (with a note). Lab and imaging need an order first. The location also follows every status change by itself.
+- **Journey timeline** (`/appointments/<id>/journey/`): every step, who made it and how long the patient was there (`VisitEvent`, append only).
+- **Checkout** (`/billing/checkout/`, cashier): the visit is now "Seen, to checkout". It can only become "Checked out" when every invoice is finalised and either paid, or claimed from the insurer/SHA with any co-pay taken. Claims, follow-up and monthly reconciliation continue as in Phase 3.
+
+Visits that were "Completed" before this change are moved to "Checked out" by migration `0003` so they do not flood the checkout queue.
+
 ## Who can do what
 
 | Action | Reception | Nurse | Doctor | Other staff |
