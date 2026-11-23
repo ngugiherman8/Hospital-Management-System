@@ -184,6 +184,19 @@ if not DEBUG:
 # Shared secret for the M-Pesa confirmation endpoint. Leave empty to keep the endpoint switched off.
 MPESA_CALLBACK_SECRET = os.environ.get("MPESA_CALLBACK_SECRET", "")
 
+# M-Pesa STK Push (prompt-to-pay). Off until every one of these is set. Values come from the Safaricom Daraja portal.
+# MPESA_STK_CALLBACK_BASE is the public https address of this system, e.g. https://hms.example.org
+MPESA_ENV = os.environ.get("MPESA_ENV", "sandbox")  # "sandbox" or "production"
+MPESA_CONSUMER_KEY = os.environ.get("MPESA_CONSUMER_KEY", "")
+MPESA_CONSUMER_SECRET = os.environ.get("MPESA_CONSUMER_SECRET", "")
+MPESA_SHORTCODE = os.environ.get("MPESA_SHORTCODE", "")
+MPESA_PASSKEY = os.environ.get("MPESA_PASSKEY", "")
+MPESA_STK_CALLBACK_BASE = os.environ.get("MPESA_STK_CALLBACK_BASE", "")
+MPESA_STK_CALLBACK_SECRET = os.environ.get("MPESA_STK_CALLBACK_SECRET", "")
+
+# Facility code SHA gives the hospital. It goes on every SHA claim file.
+HOSPITAL_FACILITY_CODE = os.environ.get("HOSPITAL_FACILITY_CODE", "")
+
 # Hybrid deployment. "local" is the hospital server, "cloud" is the read-only copy, "training" is a separate
 # practice copy with made-up patients: it shows a banner and never syncs or backs up.
 HMS_MODE = env("HMS_MODE", "local")
